@@ -1,4 +1,4 @@
-import { sendAnalytics } from '../api/client'
+import { sendAnalytics } from '../api/public'
 import { getSessionId, getSource } from '../../shared/storage'
 import type { AnalyticsEvent } from '../../shared/types'
 

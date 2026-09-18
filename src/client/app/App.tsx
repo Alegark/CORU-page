@@ -11,10 +11,14 @@ import { demoProducts } from '../../shared/catalog'
 import { loadOrders, saveOrders } from '../../shared/storage'
 import type { Order, Product } from '../../shared/types'
 import type { PublicProduct, PublicPromotion } from '../../shared/contracts'
-import { ApiClientError, fetchActivePromotion, fetchAdminOrder, fetchAdminOrders, fetchAdminProducts, fetchCatalog, fetchPublicCategories } from '../api/client'
+import { ApiClientError, fetchActivePromotion, fetchCatalog, fetchPublicCategories } from '../api/public'
 import type { Category } from '../../shared/types'
 
-const AdminShell = lazy(() => import('../features/admin/AdminShell').then(({ AdminShell: component }) => ({ default: component })))
+const AdminShell = lazy(async () => {
+  await import('../design/admin.css')
+  const { AdminShell: component } = await import('../features/admin/AdminShell')
+  return { default: component }
+})
 const AdminPages = lazy(() => import('../features/admin/AdminPages').then(({ AdminPages: component }) => ({ default: component })))
 
 const defaultPublicCategories: Category[] = [
@@ -101,13 +105,18 @@ export function App() {
   useEffect(() => {
     if (route.kind !== 'admin') return
     const controller = new AbortController()
-    fetchAdminProducts(controller.signal).then((remoteProducts) => setProducts(remoteProducts)).catch(() => undefined)
-    fetchAdminOrders(controller.signal).then(async (summaries) => {
-      const details = await Promise.all(summaries.map((summary) => fetchAdminOrder(summary.id, controller.signal)))
-      if (!controller.signal.aborted) {
-        setOrders(details)
-        saveOrders(details)
-      }
+    void import('../api/admin').then(({ fetchAdminOrder, fetchAdminOrders, fetchAdminProducts }) => {
+      if (controller.signal.aborted) return
+      void fetchAdminProducts(controller.signal).then((remoteProducts) => {
+        if (!controller.signal.aborted) setProducts(remoteProducts)
+      }).catch(() => undefined)
+      void fetchAdminOrders(controller.signal).then(async (summaries) => {
+        const details = await Promise.all(summaries.map((summary) => fetchAdminOrder(summary.id, controller.signal)))
+        if (!controller.signal.aborted) {
+          setOrders(details)
+          saveOrders(details)
+        }
+      }).catch(() => undefined)
     }).catch(() => undefined)
     return () => controller.abort()
   }, [route.kind])

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ChangeEvent } from 'react'
-import { ApiClientError, approveAdminImage, fetchAdminImages, retryAdminImage, type AdminImageRecord } from '../../api/client'
+import { ApiClientError, approveAdminImage, fetchAdminImages, retryAdminImage, type AdminImageRecord } from '../../api/admin'
 
 export type ImageUploadState = 'idle' | 'uploading' | 'ready' | 'failed'
 

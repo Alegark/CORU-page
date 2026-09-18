@@ -129,6 +129,12 @@ CORU v1.1 ! preservar tienda/admin v1 + añadir productos PREORDER, entrega STOC
 - C123: antiabuse privacy ! HMAC digests rotables de device token/IP, ⊥ valores raw; counter/event TTL ≤24 h; ⊥ orders/analytics/business export; secret server-only.
 - C124: límite excedido → HTTP 429 `ORDER_INTENT_RATE_LIMITED` + `Retry-After` + `details.retryAfterSeconds`; no order/WhatsApp URL; UI preserves cart + states retry time.
 - C125: rate check order ! resolve idempotent replay first → validate request → atomic antiabuse check/reserve → create order; failed validation ⊥ creates order; limiter unavailable → 503 `ORDER_INTENT_GUARD_UNAVAILABLE`, ⊥ fail-open.
+- C126: frontend loading isolation ! Store público y Admin pueden vivir en el mismo repo/dominio, pero JS/CSS/assets exclusivos de `/admin/*` ⊥ formar parte del dependency graph inicial descargado por rutas públicas.
+- C127: admin route boundary ! `/admin/*` debe cargarse detrás de lazy/module boundary o entrypoint separado equivalente; abrir `/`, `/producto/:slug` o `/guia-de-tallas` ⊥ solicitar módulos/chunks exclusivos de Admin.
+- C128: admin-only dependencies ! librerías/módulos usados solo por Admin (charts, tablas complejas, gestión/procesamiento de imágenes, admin API clients/data loaders) ⊥ static import desde public entry/root; deben quedar detrás del admin boundary.
+- C129: shared frontend ! Store/Admin pueden compartir tokens, UI primitives, tipos y utilidades pequeñas; shared code ⊥ arrastrar pantallas/services/dependencias exclusivas de Admin al public initial dependency graph.
+- C130: public performance ! añadir funcionalidades exclusivamente administrativas ⊥ añadir su código/peso específico a JS/CSS inicial del Store; imágenes de catálogo ! derivados optimizados + lazy loading cuando estén fuera del viewport.
+- C131: production bundle audit ! antes de release inspeccionar output/chunk graph de Vite + requests de red de rutas públicas y registrar tamaños de chunks públicos principales; antes de navegar a `/admin/*` ! cero requests de chunks exclusivos de Admin.
 
 ## §I INTERFACES
 - I1 page: `/` → public catalog; header→promo→search→category rail→grid→floating cart mobile.
@@ -440,6 +446,11 @@ R13|Recovery provenance|downloaded malformed SPEC = 1,055 duplicate R9 records, 
 - V126: limiter unavailable/error → 503 stable code + no order; ⊥ bypass protection/fail-open.
 - V127: concurrent confirm/deposit/discard/expiry/cancel operations serialize on current persisted state; exactly one valid transition commits.
 - V128: E2E lifecycle ! STOCK PENDING→CONFIRMED→CANCELLED restores exact stock once; PREORDER PENDING expires or deposit→CONFIRMED→CANCELLED with inventory delta 0.
+- V129: production public entry dependency closure ⊥ módulos/styles/assets exclusivos de `/admin/*`.
+- V130: navegación directa a `/`, `/producto/:slug` o `/guia-de-tallas` ⊥ solicita chunks exclusivos de Admin antes de navegación a `/admin/*`.
+- V131: dependencia exclusiva de Admin, incl. admin API/data loaders + CSS Admin, ⊥ static import desde Store/public root; ! permanecer detrás del admin lazy boundary.
+- V132: feature únicamente administrativa puede crear/aumentar chunks Admin, pero ⊥ incorporar su código/bytes específicos a public initial chunks.
+- V133: build gate bundle isolation ! `pnpm build` + inspección chunk graph + Playwright/browser network prueban V129-V132; shared tokens/UI primitives permitidos como common chunks.
 
 ## §T TASKS
 id|status|task|cites
@@ -482,6 +493,7 @@ T36|.|run doc drift check + migration dry-run + typecheck/tests/build/a11y/respo
 T37|x|build exact 72h pending expiry sweep + lazy enforcement + status audit|C114-C117,I145-I146,I149,V113-V116,V120,V127
 T38|x|build signed device cookie + atomic device/IP antiabuse counters + 429/503 Store feedback|C121-C125,I142-I144,I147-I148,V121-V126
 T39|~|build `cancel-sale`: STOCK atomic SALE_REVERSAL restock; PREORDER no-restock cancellation|C117-C120,I141,I146,I149,V117-V120,V127-V128
+T40|x|isolate Store/Admin client loading: move admin route tree+data loaders behind lazy boundary, split admin-only API/CSS/dependencies, inspect Vite production chunk graph + public Playwright/network requests; record main public chunk sizes|C126-C131,V129-V133
 
 ## §B BUGS
 id|date|cause|fix

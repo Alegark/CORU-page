@@ -1,59 +1,8 @@
-import type { ApiError, ApiSuccess, OrderIntentInput, OrderIntentResponse, OrderSummary, PublicCategory, PublicProduct, PublicPromotion, YummyQuoteRequest, YummyQuoteResponse } from '../../shared/contracts'
-import type { AnalyticsEvent, Category, Currency, Order, Product, Promotion, StoreSettings, PersonalDeliveryPoint, ShippingSelection } from '../../shared/types'
+import type { OrderSummary } from '../../shared/contracts'
+import type { Category, Currency, Order, PersonalDeliveryPoint, Product, Promotion, StoreSettings } from '../../shared/types'
+import { ApiClientError, requestJson, type PublicRateResponse } from './core'
 
-export class ApiClientError extends Error {
-  constructor(public readonly code: string, message: string, public readonly status: number, public readonly details?: unknown) {
-    super(message)
-    this.name = 'ApiClientError'
-  }
-}
-
-async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
-  let response: Response
-  try { response = await fetch(input, { ...init, headers: { Accept: 'application/json', ...(init?.headers ?? {}) } }) } catch { throw new ApiClientError('NETWORK_ERROR', 'No pudimos conectar con la tienda.', 0) }
-  const payload = await response.json().catch(() => null) as ApiSuccess<T> | ApiError | null
-  if (!response.ok || !payload || !('data' in payload)) {
-    const error = payload && 'error' in payload ? payload.error : undefined
-    throw new ApiClientError(error?.code ?? 'HTTP_ERROR', error?.message ?? 'La solicitud no pudo completarse.', response.status, error?.details)
-  }
-  return payload.data
-}
-
-export type PublicRateResponse = { available: boolean; rateMicros: number | null; mode: 'AUTOMATIC' | 'MANUAL'; updatedAt: string | null }
-
-export function fetchCatalog(signal?: AbortSignal): Promise<PublicProduct[]> {
-  return requestJson<PublicProduct[]>('/api/catalog', { signal })
-}
-
-export function fetchPublicCategories(signal?: AbortSignal): Promise<PublicCategory[]> {
-  return requestJson<PublicCategory[]>('/api/categories', { signal })
-}
-
-export function fetchActivePromotion(signal?: AbortSignal): Promise<PublicPromotion | null> {
-  return requestJson<PublicPromotion | null>('/api/promotions/active', { signal })
-}
-
-export function fetchProduct(slug: string, signal?: AbortSignal): Promise<PublicProduct> {
-  return requestJson<PublicProduct>(`/api/products/${encodeURIComponent(slug)}`, { signal })
-}
-
-export function fetchExchangeRate(signal?: AbortSignal): Promise<PublicRateResponse> {
-  return requestJson<PublicRateResponse>('/api/exchange-rate', { signal })
-}
-
-export function fetchPersonalDeliveryPoints(signal?: AbortSignal): Promise<PersonalDeliveryPoint[]> {
-  return requestJson<PersonalDeliveryPoint[]>('/api/personal-delivery-points', { signal })
-}
-
-export function requestYummyQuote(input: YummyQuoteRequest, signal?: AbortSignal): Promise<YummyQuoteResponse> {
-  return requestJson<YummyQuoteResponse>('/api/shipping/yummy/quote', { method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) })
-}
-
-export function createWhatsappOrder(input: OrderIntentInput, idempotencyKey: string, signal?: AbortSignal): Promise<OrderIntentResponse> {
-  return requestJson<OrderIntentResponse>('/api/orders/whatsapp', { method: 'POST', signal, headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(input) })
-}
-
-export type PublicShippingSelection = ShippingSelection
+export { ApiClientError }
 
 export function fetchAdminProducts(signal?: AbortSignal): Promise<Product[]> {
   return requestJson<Product[]>('/api/admin/products', { signal })
@@ -273,15 +222,9 @@ export function recordAdminPreorderDeposit(id: string, input: { currency: Curren
 }
 
 export function markAdminPreorderReady(id: string, signal?: AbortSignal): Promise<Order> { return requestJson<Order>(`/api/admin/orders/${encodeURIComponent(id)}/mark-ready`, { method: 'POST', signal }) }
+
 export function recordAdminPreorderBalance(id: string, input: { currency: Currency; paidAmountMinor?: number; rateMicros?: number; note?: string }, idempotencyKey: string, signal?: AbortSignal): Promise<Order> {
   return requestJson<Order>(`/api/admin/orders/${encodeURIComponent(id)}/record-balance`, { method: 'POST', signal, headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(input) })
 }
+
 export function markAdminPreorderDelivered(id: string, signal?: AbortSignal): Promise<Order> { return requestJson<Order>(`/api/admin/orders/${encodeURIComponent(id)}/mark-delivered`, { method: 'POST', signal }) }
-
-export function sendAnalytics(events: AnalyticsEvent[], signal?: AbortSignal): Promise<{ accepted: number }> {
-  return requestJson<{ accepted: number }>('/api/analytics', { method: 'POST', signal, keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ events }) })
-}
-
-export function currencySupportsRate(currency: Currency, rate: PublicRateResponse | null): boolean {
-  return currency === 'USD' || Boolean(rate?.available && rate.rateMicros && rate.rateMicros > 0)
-}

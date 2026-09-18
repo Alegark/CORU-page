@@ -8,7 +8,7 @@ import { useCart } from '../../features/cart/CartContext'
 import { RingArtwork } from './RingArtwork'
 import { analytics } from '../../analytics/client'
 import { RateLockNotice } from './RateLockNotice'
-import { ApiClientError, fetchPersonalDeliveryPoints, requestYummyQuote } from '../../api/client'
+import { ApiClientError, fetchPersonalDeliveryPoints, requestYummyQuote } from '../../api/public'
 import { createOrderIntentRemote } from '../../features/orders/orderIntent'
 import { PersonalDeliveryPointMap } from './PersonalDeliveryPointMap'
 

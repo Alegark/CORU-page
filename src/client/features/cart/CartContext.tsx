@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { loadCart, loadCurrency, saveCart, saveCurrency } from '../../../shared/storage'
 import type { CartLine, Currency, Product } from '../../../shared/types'
-import { ApiClientError, fetchExchangeRate } from '../../api/client'
+import { ApiClientError, fetchExchangeRate } from '../../api/public'
 import { demoProducts } from '../../../shared/catalog'
 import type { PromotionRule } from '../../../shared/commerce'
 
