@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "coru",
+  "main": "src/worker/index.ts",
+  "workers_dev": false,
+  "compatibility_date": "2026-09-15",
+  "vars": {
+    "ENVIRONMENT": "production",
+    "TURSO_DATABASE_URL": "libsql://coru-production-alegark.aws-us-east-1.turso.io",
+    "EXCHANGE_RATE_URL": "https://developerlab.dev/api/proxy?url=https%3A%2F%2Fwww.binance.com%2Fbapi%2Fc2c%2Fv1%2Fpublic%2Fc2c%2Fagent%2Fquote-price%3Ffiat%3DVES%26asset%3DUSDT%26tradeType%3DBUY",
+    "TEAM_DOMAIN": "https://publiex.cloudflareaccess.com",
+    "POLICY_AUD": "0913bf60ea32ad78cbfbd8537f18f53d520aed64b1e63a7da0aebaf369ceba5e"
+  },
+  "r2_buckets": [
+    {
+      "binding": "CORU_MEDIA",
+      "bucket_name": "coru-media-production"
+    }
+  ],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "routes": [
+    { "pattern": "coru.systems", "custom_domain": true }
+  ],
+  "triggers": {
+    "crons": ["*/10 * * * *"]
+  }
+}
