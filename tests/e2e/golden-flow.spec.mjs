@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 
 test.describe('CORU golden paths', () => {
-  test('mobile: three rings, Bs notice and one WhatsApp intent', async ({ page }) => {
+  test('mobile: three rings, Bs bubble and one WhatsApp intent', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto('/')
 
@@ -11,8 +11,10 @@ test.describe('CORU golden paths', () => {
     await expect(page.locator('.floating-cart')).toBeVisible()
     await expect(page.locator('.floating-cart-count')).toHaveText('3')
     await page.getByRole('button', { name: 'Bs' }).click()
+    await expect(page.getByText('La tasa en Bs queda protegida hasta finalizar hoy.')).toBeVisible()
     await page.getByRole('button', { name: 'Abrir carrito, 3 productos' }).click()
-    await expect(page.getByText('Al generar tu pedido, el monto en Bs mantendrá la tasa asignada hasta finalizar hoy.')).toBeVisible()
+    await expect(page.getByText('Al generar tu pedido, el monto en Bs mantendrá la tasa asignada hasta finalizar hoy.')).toHaveCount(0)
+    await expect(page.locator('.cart-footer-scroll')).toHaveCount(0)
 
     const whatsapp = page.waitForEvent('popup')
     await page.getByRole('button', { name: 'Pedir por WhatsApp' }).click()

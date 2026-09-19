@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest'
+import { useState } from 'react'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StorePage } from '../src/client/features/catalog/StorePage'
+import { StoreHeader } from '../src/client/components/store/StoreHeader'
 import { CartProvider } from '../src/client/features/cart/CartContext'
 import { demoProducts } from '../src/shared/catalog'
+import type { Currency } from '../src/shared/types'
+
+function CurrencyHeaderHarness() {
+  const [currency, setCurrency] = useState<Currency>('USD')
+  return <StoreHeader currency={currency} onCurrencyChange={setCurrency} rateAvailable />
+}
 
 describe('Store', () => {
   it('adds three eligible rings and shows the bundle total without a size selector', async () => {
@@ -41,6 +49,18 @@ describe('Store', () => {
     menu.focus()
     fireEvent.pointerUp(menu, { pointerType: 'touch' })
     expect(menu).not.toHaveFocus()
+  })
+
+  it('shows the Bs rate explanation beside the currency toggle', async () => {
+    const user = userEvent.setup()
+    render(<CurrencyHeaderHarness />)
+
+    await user.click(screen.getByRole('button', { name: 'Bs' }))
+    expect(screen.getByRole('status')).toHaveTextContent('La tasa en Bs queda protegida hasta finalizar hoy.')
+    expect(screen.getByRole('status')).toHaveAttribute('aria-hidden', 'false')
+
+    await user.click(screen.getByRole('button', { name: 'Cerrar aviso de tasa' }))
+    expect(document.querySelector('#currency-rate-notice')).toHaveAttribute('aria-hidden', 'true')
   })
 
   it('renders a sliding pill behind the selected category', () => {

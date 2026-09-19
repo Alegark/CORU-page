@@ -175,6 +175,104 @@
   isolation: isolate;
 }
 
+.currency-control {
+  position: relative;
+  display: inline-flex;
+}
+
+/* Tooltip open/close: the currency explanation is anchored to the toggle
+   and can be dismissed without taking space from the cart. */
+.t-tt {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translate(-50%, 0) scale(var(--tt-scale));
+  transform-origin: 50% 100%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  color: var(--tt-fg);
+  background: var(--tt-bg);
+  white-space: nowrap;
+  box-shadow:
+    0 0 0 1px rgb(0 0 0 / 0.06),
+    0 2px 6px 0 rgb(0 0 0 / 0.05),
+    0 4px 42px 0 rgb(0 0 0 / 0.06);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--tt-out-dur) var(--tt-out-ease),
+    transform var(--tt-out-dur) var(--tt-out-ease);
+}
+
+.currency-rate-bubble {
+  top: calc(100% + 10px);
+  right: 0;
+  bottom: auto;
+  left: auto;
+  display: flex;
+  width: min(286px, calc(100vw - 32px));
+  align-items: flex-start;
+  gap: 9px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-brand) 42%, var(--color-border-strong));
+  border-radius: 14px;
+  color: var(--color-success);
+  background: var(--color-success-surface);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  white-space: normal;
+  transform: translateY(-4px) scale(var(--tt-scale));
+  transform-origin: top right;
+  z-index: 20;
+}
+
+.currency-rate-bubble > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.currency-rate-bubble span {
+  flex: 1;
+}
+
+.currency-rate-bubble button {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  place-items: center;
+  margin: -2px -3px 0 0;
+  border-radius: 999px;
+  color: var(--color-success);
+  background: transparent;
+}
+
+.currency-rate-bubble button:hover {
+  background: color-mix(in srgb, var(--color-brand) 24%, transparent);
+}
+
+.currency-rate-bubble.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+  transition-duration: var(--tt-in-dur);
+  transition-timing-function: var(--tt-in-ease);
+  transition-delay: var(--tt-delay);
+}
+
+.currency-rate-bubble::before {
+  position: absolute;
+  top: -6px;
+  right: 25px;
+  width: 10px;
+  height: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--color-brand) 42%, var(--color-border-strong));
+  border-left: 1px solid color-mix(in srgb, var(--color-brand) 42%, var(--color-border-strong));
+  background: var(--color-success-surface);
+  content: '';
+  transform: rotate(45deg);
+}
+
 .currency-toggle::before {
   position: absolute;
   top: 3px;
@@ -811,7 +909,8 @@
   .filter-row.t-tabs .filter-chip,
   .t-badge,
   .t-badge .floating-cart-count,
-  .product-card-image .ring-art {
+  .product-card-image .ring-art,
+  .currency-rate-bubble {
     animation: none !important;
     transition: none !important;
   }
@@ -1151,18 +1250,9 @@
 }
 
 .cart-footer {
-  display: flex;
-  min-height: 0;
-  flex-direction: column;
   padding: 14px 22px 22px;
   border-top: 1px solid var(--color-border);
   background: var(--color-white);
-}
-
-.cart-footer-scroll {
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
 }
 
 .cart-promo {
@@ -1264,8 +1354,6 @@
 
 .whatsapp-cta {
   width: 100%;
-  flex: 0 0 auto;
-  margin-top: 10px;
 }
 
 .privacy-notice {
@@ -1846,8 +1934,6 @@
   }
 
   .cart-footer {
-    max-height: 40dvh;
-    overflow: hidden;
     padding: 9px 18px max(16px, env(safe-area-inset-bottom));
   }
 
