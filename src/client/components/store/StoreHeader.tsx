@@ -72,7 +72,7 @@ export function StoreHeader({ currency, onCurrencyChange, rateAvailable = true, 
           {currency === 'Bs' && (
             <div className={`currency-rate-bubble t-tt${rateNoticeVisible ? ' is-visible' : ''}`} id="currency-rate-notice" role="status" aria-live="polite" aria-hidden={!rateNoticeVisible}>
               <Icon icon={icons.info} />
-              <span>La tasa en Bs queda protegida hasta finalizar hoy.</span>
+              <span>Si envías tu pedido hoy, la tasa en Bs queda protegida hasta finalizar el día.</span>
               <button type="button" tabIndex={rateNoticeVisible ? 0 : -1} aria-label="Cerrar aviso de tasa" onClick={hideRateNotice}><Icon icon={icons.xmark} /></button>
             </div>
           )}

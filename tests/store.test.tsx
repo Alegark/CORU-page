@@ -56,7 +56,7 @@ describe('Store', () => {
     render(<CurrencyHeaderHarness />)
 
     await user.click(screen.getByRole('button', { name: 'Bs' }))
-    expect(screen.getByRole('status')).toHaveTextContent('La tasa en Bs queda protegida hasta finalizar hoy.')
+    expect(screen.getByRole('status')).toHaveTextContent('Si envías tu pedido hoy, la tasa en Bs queda protegida hasta finalizar el día.')
     expect(screen.getByRole('status')).toHaveAttribute('aria-hidden', 'false')
 
     await user.click(screen.getByRole('button', { name: 'Cerrar aviso de tasa' }))

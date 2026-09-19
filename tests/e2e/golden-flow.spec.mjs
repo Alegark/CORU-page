@@ -11,7 +11,7 @@ test.describe('CORU golden paths', () => {
     await expect(page.locator('.floating-cart')).toBeVisible()
     await expect(page.locator('.floating-cart-count')).toHaveText('3')
     await page.getByRole('button', { name: 'Bs' }).click()
-    await expect(page.getByText('La tasa en Bs queda protegida hasta finalizar hoy.')).toBeVisible()
+    await expect(page.getByText('Si envías tu pedido hoy, la tasa en Bs queda protegida hasta finalizar el día.')).toBeVisible()
     await page.getByRole('button', { name: 'Abrir carrito, 3 productos' }).click()
     await expect(page.getByText('Al generar tu pedido, el monto en Bs mantendrá la tasa asignada hasta finalizar hoy.')).toHaveCount(0)
     await expect(page.locator('.cart-footer-scroll')).toHaveCount(0)
