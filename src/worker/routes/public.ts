@@ -11,12 +11,24 @@ import { quoteYummyDelivery } from '../services/yummy.service'
 import { createHttpRateProvider, getPublicRate, refreshRate } from '../services/exchange-rate.service'
 import { createBinanceP2pProvider } from '../services/exchange-rate/binance-p2p.adapter'
 import { recordAnalytics } from '../services/analytics.service'
-import { findPersistedOrder, persistAnalytics, persistPendingOrder, persistRate, schedulePersistence } from '../persistence'
+import { findActivePromotion, findPersistedOrder, persistAnalytics, persistPendingOrder, persistRate, schedulePersistence } from '../persistence'
 import { MemoryMediaStore, R2MediaStore, type R2BucketLike } from '../adapters/r2'
 import { OrderRepository } from '../../db/repositories/orders.repository'
 
 function activePromotion(now = new Date()) {
   return state.settings.storeActive ? state.promotions.find((candidate) => candidate.active && (!candidate.startsAt || now >= new Date(candidate.startsAt)) && (!candidate.endsAt || now <= new Date(candidate.endsAt))) : undefined
+}
+
+async function activePromotionForRequest(c: Context<CoruEnv>, now = new Date()) {
+  const database = c.get('database')
+  if (!database) return activePromotion(now)
+  try {
+    // Public reads must not depend on a stale isolate-local promotion list.
+    // Turso is the durable source of truth for configured Workers.
+    return await findActivePromotion(database, now)
+  } catch {
+    return activePromotion(now)
+  }
 }
 
 function toPublicProduct(product: ReturnType<typeof getPublicProducts>[number], promotion = activePromotion()): PublicProduct {
@@ -83,7 +95,10 @@ async function refreshAutomaticRateIfNeeded(c: Context<CoruEnv>): Promise<boolea
 
 export const publicApi = new Hono<CoruEnv>()
 
-publicApi.get('/api/catalog', (c) => c.json({ data: state.settings.storeActive ? publicProducts().map((product) => toPublicProduct(product)) : [] } satisfies ApiSuccess<PublicProduct[]>))
+publicApi.get('/api/catalog', async (c) => {
+  const promotion = await activePromotionForRequest(c)
+  return c.json({ data: state.settings.storeActive ? publicProducts().map((product) => toPublicProduct(product, promotion)) : [] } satisfies ApiSuccess<PublicProduct[]>)
+})
 
 publicApi.get('/api/categories', (c) => c.json({ data: state.settings.storeActive ? state.categories.filter((category) => category.active).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)).map(({ id, slug, name, sortOrder }) => ({ id, slug, name, sortOrder })) : [] }))
 
@@ -107,17 +122,17 @@ publicApi.post('/api/shipping/yummy/quote', async (c) => {
   return c.json({ data: response })
 })
 
-publicApi.get('/api/promotions/active', (c) => {
-  const promotion = activePromotion()
+publicApi.get('/api/promotions/active', async (c) => {
+  const promotion = await activePromotionForRequest(c)
   if (!promotion) return c.json({ data: null } satisfies ApiSuccess<PublicPromotion | null>)
   const { id, name, kind, targetCategory, bundleQuantity, bundlePriceCents, fixedDiscountCents } = promotion
   return c.json({ data: { id, name, kind, ...(targetCategory ? { targetCategory } : {}), ...(bundleQuantity !== undefined ? { bundleQuantity } : {}), ...(bundlePriceCents !== undefined ? { bundlePriceCents } : {}), ...(fixedDiscountCents !== undefined ? { fixedDiscountCents } : {}) } } satisfies ApiSuccess<PublicPromotion>)
 })
 
-publicApi.get('/api/products/:slug', (c) => {
+publicApi.get('/api/products/:slug', async (c) => {
   const product = publicProductForSlug(c.req.param('slug'))
   if (!product) return c.json({ error: { code: 'NOT_FOUND', message: 'Producto no encontrado.' } } satisfies ApiError, 404)
-  return c.json({ data: toPublicProduct(product) } satisfies ApiSuccess<PublicProduct>)
+  return c.json({ data: toPublicProduct(product, await activePromotionForRequest(c)) } satisfies ApiSuccess<PublicProduct>)
 })
 
 publicApi.get('/api/products/:slug/image', async (c) => {
@@ -171,7 +186,8 @@ publicApi.post('/api/orders/whatsapp', async (c) => {
       return c.json({ error: { code: guard.code, message: 'Alcanzaste el límite temporal de solicitudes.', details: { retryAfterSeconds: guard.retryAfterSeconds } } } satisfies ApiError, 429, guard.retryAfterSeconds ? { 'Retry-After': String(guard.retryAfterSeconds) } : undefined)
     }
     if (guard.setCookie) c.header('Set-Cookie', guard.setCookie)
-    const result = createPendingOrder(state, parsed.value.lines, parsed.value.currency, parsed.value.rateMicros, key, new Date(), { shipping: parsed.value.shipping, sessionId: parsed.value.sessionId, source: parsed.value.source })
+    const promotion = validated.fulfillmentType === 'STOCK' ? (await activePromotionForRequest(c)) ?? null : null
+    const result = createPendingOrder(state, parsed.value.lines, parsed.value.currency, parsed.value.rateMicros, key, new Date(), { shipping: parsed.value.shipping, sessionId: parsed.value.sessionId, source: parsed.value.source, promotion })
     if (!result.reused) {
       const database = c.get('database')
       if (database) {

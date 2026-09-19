@@ -103,6 +103,13 @@ function asPromotion(row: Record<string, unknown>): Promotion | undefined {
   }
 }
 
+/** Read the currently active promotion from the durable source of truth. */
+export async function findActivePromotion(db: SqlClient, now = new Date()): Promise<Promotion | undefined> {
+  const timestamp = now.toISOString()
+  const result = await db.execute<Record<string, unknown>>(`SELECT p.id, p.name, p.kind, c.name AS target_category, p.bundle_quantity, p.bundle_price_cents, p.fixed_discount_cents, p.is_active, p.starts_at, p.ends_at FROM promotions p LEFT JOIN categories c ON c.id = p.target_category_id WHERE p.is_active = 1 AND (p.starts_at IS NULL OR p.starts_at <= ?) AND (p.ends_at IS NULL OR p.ends_at >= ?) ORDER BY p.created_at DESC LIMIT 1`, [timestamp, timestamp])
+  return asPromotion(result.rows[0] ?? {})
+}
+
 function parseSettings(rows: Array<Record<string, unknown>>, current: StoreSettings): StoreSettings {
   const next: StoreSettings = { ...current }
   for (const row of rows) {

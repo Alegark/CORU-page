@@ -1,4 +1,4 @@
-import { convertUsdCentsToBs, quoteCart } from '../../shared/commerce'
+import { convertUsdCentsToBs, quoteCart, type PromotionRule } from '../../shared/commerce'
 import type { CartLine, Currency, CommerceQuote, FulfillmentType, Order, OrderPayment, PaymentKind, ShippingSelection, ShippingSnapshot } from '../../shared/types'
 import type { CoruState } from '../state'
 import { consumeForOrder, InventoryServiceError, reverseSaleForOrder } from './inventory.service'
@@ -13,7 +13,7 @@ export class OrderServiceError extends Error {
   }
 }
 
-export type CreateOrderOptions = { shipping?: ShippingSelection | null; actor?: string; sessionId?: string; source?: string }
+export type CreateOrderOptions = { shipping?: ShippingSelection | null; actor?: string; sessionId?: string; source?: string; promotion?: PromotionRule | null }
 export type PaymentInput = { currency: Currency; paidAmountMinor?: number; rateMicros?: number; note?: string }
 
 const ORDER_TTL_MS = 72 * 60 * 60 * 1000
@@ -127,7 +127,11 @@ export function createPendingOrder(state: CoruState, lines: CartLine[], currency
   const { normalized, selected, fulfillmentType } = validateOrderIntent(state, lines, options.shipping)
   const products = new Map(state.products.map((product) => [product.id, product]))
   const payment = usablePayment(state, currency, requestedRateMicros, now)
-  const promotion = fulfillmentType === 'STOCK' ? state.promotions?.find((candidate) => candidate.active && (!candidate.startsAt || now >= new Date(candidate.startsAt)) && (!candidate.endsAt || now <= new Date(candidate.endsAt))) : null
+  const promotion = fulfillmentType === 'STOCK'
+    ? options.promotion !== undefined
+      ? options.promotion
+      : state.promotions?.find((candidate) => candidate.active && (!candidate.startsAt || now >= new Date(candidate.startsAt)) && (!candidate.endsAt || now <= new Date(candidate.endsAt)))
+    : null
   const quote = quoteCart(normalized, state.products, promotion)
   const orderItems = selected.map(({ line, product }) => ({ ...line, name: product.name, sizeLabel: product.sizeLabel, unitPriceCents: product.priceCents, lineTotalCents: product.priceCents * line.quantity, material: product.material, fulfillmentTypeSnapshot: fulfillmentOf(product) }))
   const reference = nextReference(state.orders)

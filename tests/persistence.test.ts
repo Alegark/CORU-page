@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SqlClient, SqlResult, SqlValue } from '../src/db/client'
-import { confirmPersistedOrder, hydrateStateFromDatabase, persistPendingOrder } from '../src/worker/persistence'
+import { confirmPersistedOrder, findActivePromotion, hydrateStateFromDatabase, persistPendingOrder } from '../src/worker/persistence'
 import { resetState, state } from '../src/worker/state'
 import type { Order } from '../src/shared/types'
 
@@ -24,6 +24,12 @@ function fakeDatabase(rateRow: Record<string, unknown> = { rate_micros: 41000000
 }
 
 describe('Turso persistence bridge', () => {
+  it('finds the active promotion from durable rows for public reads', async () => {
+    const { db } = fakeDatabase()
+    const promotion = await findActivePromotion(db, new Date('2026-09-18T12:00:00.000Z'))
+    expect(promotion).toMatchObject({ id: 'promo-db', name: 'Combo DB', active: true, bundleQuantity: 3, bundlePriceCents: 1000 })
+  })
+
   it('hydrates catalog, promotion, settings and rate state from SQL rows', async () => {
     resetState()
     const { db } = fakeDatabase()
