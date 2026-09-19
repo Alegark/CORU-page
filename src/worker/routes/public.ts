@@ -11,7 +11,7 @@ import { quoteYummyDelivery } from '../services/yummy.service'
 import { createHttpRateProvider, getPublicRate, refreshRate } from '../services/exchange-rate.service'
 import { createBinanceP2pProvider } from '../services/exchange-rate/binance-p2p.adapter'
 import { recordAnalytics } from '../services/analytics.service'
-import { findActivePromotion, findPersistedOrder, persistAnalytics, persistPendingOrder, persistRate, schedulePersistence } from '../persistence'
+import { findActivePromotion, findPersistedOrder, hydrateCatalogFromDatabase, persistAnalytics, persistPendingOrder, persistRate, schedulePersistence } from '../persistence'
 import { MemoryMediaStore, R2MediaStore, type R2BucketLike } from '../adapters/r2'
 import { OrderRepository } from '../../db/repositories/orders.repository'
 
@@ -29,6 +29,11 @@ async function activePromotionForRequest(c: Context<CoruEnv>, now = new Date()) 
   } catch {
     return activePromotion(now)
   }
+}
+
+async function refreshCatalogForRequest(c: Context<CoruEnv>): Promise<void> {
+  const database = c.get('database')
+  if (database) await hydrateCatalogFromDatabase(state, database)
 }
 
 function toPublicProduct(product: ReturnType<typeof getPublicProducts>[number], promotion = activePromotion()): PublicProduct {
@@ -96,11 +101,17 @@ async function refreshAutomaticRateIfNeeded(c: Context<CoruEnv>): Promise<boolea
 export const publicApi = new Hono<CoruEnv>()
 
 publicApi.get('/api/catalog', async (c) => {
+  await refreshCatalogForRequest(c)
+  c.header('Cache-Control', 'no-store')
   const promotion = await activePromotionForRequest(c)
   return c.json({ data: state.settings.storeActive ? publicProducts().map((product) => toPublicProduct(product, promotion)) : [] } satisfies ApiSuccess<PublicProduct[]>)
 })
 
-publicApi.get('/api/categories', (c) => c.json({ data: state.settings.storeActive ? state.categories.filter((category) => category.active).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)).map(({ id, slug, name, sortOrder }) => ({ id, slug, name, sortOrder })) : [] }))
+publicApi.get('/api/categories', async (c) => {
+  await refreshCatalogForRequest(c)
+  c.header('Cache-Control', 'no-store')
+  return c.json({ data: state.settings.storeActive ? state.categories.filter((category) => category.active).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)).map(({ id, slug, name, sortOrder }) => ({ id, slug, name, sortOrder })) : [] })
+})
 
 publicApi.get('/api/personal-delivery-points', (c) => c.json({ data: state.settings.storeActive ? state.deliveryPoints.filter((point) => point.active).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)).map(({ id, name, address, shortDescription, latitude, longitude, scheduleText, sortOrder }) => ({ id, name, address, ...(shortDescription ? { shortDescription } : {}), ...(latitude !== undefined ? { latitude } : {}), ...(longitude !== undefined ? { longitude } : {}), ...(scheduleText ? { scheduleText } : {}), sortOrder })) : [] }))
 
@@ -123,6 +134,7 @@ publicApi.post('/api/shipping/yummy/quote', async (c) => {
 })
 
 publicApi.get('/api/promotions/active', async (c) => {
+  c.header('Cache-Control', 'no-store')
   const promotion = await activePromotionForRequest(c)
   if (!promotion) return c.json({ data: null } satisfies ApiSuccess<PublicPromotion | null>)
   const { id, name, kind, targetCategory, bundleQuantity, bundlePriceCents, fixedDiscountCents } = promotion
@@ -130,12 +142,15 @@ publicApi.get('/api/promotions/active', async (c) => {
 })
 
 publicApi.get('/api/products/:slug', async (c) => {
+  await refreshCatalogForRequest(c)
+  c.header('Cache-Control', 'no-store')
   const product = publicProductForSlug(c.req.param('slug'))
   if (!product) return c.json({ error: { code: 'NOT_FOUND', message: 'Producto no encontrado.' } } satisfies ApiError, 404)
   return c.json({ data: toPublicProduct(product, await activePromotionForRequest(c)) } satisfies ApiSuccess<PublicProduct>)
 })
 
 publicApi.get('/api/products/:slug/image', async (c) => {
+  await refreshCatalogForRequest(c)
   const product = publicProductForSlug(c.req.param('slug'))
   if (!product) return c.json({ error: { code: 'NOT_FOUND', message: 'Imagen no encontrada.' } } satisfies ApiError, 404)
   const image = [...state.images.values()].find((candidate) => candidate.productId === product.id && candidate.approvedVariant)
@@ -164,6 +179,7 @@ publicApi.get('/api/exchange-rate', async (c) => {
 })
 
 publicApi.post('/api/orders/whatsapp', async (c) => {
+  await refreshCatalogForRequest(c)
   const key = c.req.header('Idempotency-Key')?.trim()
   if (!key || key.length > 120) return c.json({ error: { code: 'IDEMPOTENCY_KEY_REQUIRED', message: 'Se requiere Idempotency-Key.' } } satisfies ApiError, 422)
   const replay = state.idempotency.get(key)

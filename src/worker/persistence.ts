@@ -278,8 +278,8 @@ function hydrateOrders(rows: JoinedOrderRow[]): { orders: Order[]; idempotency: 
   return { orders, idempotency }
 }
 
-/** Hydrate all state that has a stable representation in the v1 migration. */
-export async function hydrateStateFromDatabase(state: CoruState, db: SqlClient): Promise<void> {
+/** Refresh the catalog portion of an isolate from Turso's durable rows. */
+export async function hydrateCatalogFromDatabase(state: CoruState, db: SqlClient): Promise<void> {
   const categoriesResult = await db.execute<Record<string, unknown>>('SELECT id, slug, name, sort_order, is_active FROM categories ORDER BY sort_order, name')
   state.categories = categoriesResult.rows.map(asCategory).filter((entry): entry is Category => Boolean(entry))
 
@@ -294,6 +294,11 @@ export async function hydrateStateFromDatabase(state: CoruState, db: SqlClient):
 
   const settingsResult = await db.execute<Record<string, unknown>>('SELECT key, value_json FROM store_settings')
   state.settings = parseSettings(settingsResult.rows, state.settings)
+}
+
+/** Hydrate all state that has a stable representation in the v1 migration. */
+export async function hydrateStateFromDatabase(state: CoruState, db: SqlClient): Promise<void> {
+  await hydrateCatalogFromDatabase(state, db)
 
   try {
     const pointsResult = await db.execute<Record<string, unknown>>('SELECT id, name, address, short_description, latitude, longitude, schedule_text, is_active, sort_order FROM personal_delivery_points ORDER BY sort_order, name')

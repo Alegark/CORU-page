@@ -8,6 +8,7 @@ describe('CORU Worker API contracts', () => {
   it('returns a public catalog without internal stock flags', async () => {
     const response = await app.request('/api/catalog')
     expect(response.status).toBe(200)
+    expect(response.headers.get('cache-control')).toBe('no-store')
     const body = await response.json() as { data: Array<Record<string, unknown>> }
     expect(body.data.length).toBeGreaterThan(0)
     expect(body.data[0]).not.toHaveProperty('stockQuantity')

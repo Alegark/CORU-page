@@ -11,7 +11,7 @@ export type PublicRateResponse = { available: boolean; rateMicros: number | null
 
 export async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
   let response: Response
-  try { response = await fetch(input, { ...init, headers: { Accept: 'application/json', ...(init?.headers ?? {}) } }) } catch { throw new ApiClientError('NETWORK_ERROR', 'No pudimos conectar con la tienda.', 0) }
+  try { response = await fetch(input, { ...init, cache: init?.cache ?? 'no-store', headers: { Accept: 'application/json', ...(init?.headers ?? {}) } }) } catch { throw new ApiClientError('NETWORK_ERROR', 'No pudimos conectar con la tienda.', 0) }
   const payload = await response.json().catch(() => null) as ApiSuccess<T> | ApiError | null
   if (!response.ok || !payload || !('data' in payload)) {
     const error = payload && 'error' in payload ? payload.error : undefined

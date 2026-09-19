@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SqlClient, SqlResult, SqlValue } from '../src/db/client'
-import { confirmPersistedOrder, findActivePromotion, hydrateStateFromDatabase, persistPendingOrder } from '../src/worker/persistence'
+import { confirmPersistedOrder, findActivePromotion, hydrateCatalogFromDatabase, hydrateStateFromDatabase, persistPendingOrder } from '../src/worker/persistence'
 import { resetState, state } from '../src/worker/state'
 import type { Order } from '../src/shared/types'
 
@@ -39,6 +39,18 @@ describe('Turso persistence bridge', () => {
     expect(state.promotions[0]).toMatchObject({ id: 'promo-db', bundleQuantity: 3 })
     expect(state.settings.storeName).toBe('DB CORU')
     expect(state.currentRateMicros).toBe(41_000_000)
+  })
+
+  it('refreshes the catalog from durable rows after an isolate already has stale state', async () => {
+    resetState()
+    state.categories = [{ id: 'stale-category', slug: 'stale', name: 'Stale', sortOrder: 1, active: true }]
+    state.products = []
+    const { db } = fakeDatabase()
+
+    await hydrateCatalogFromDatabase(state, db)
+
+    expect(state.categories).toEqual([{ id: 'cat-db', slug: 'anillos', name: 'Anillos', sortOrder: 1, active: true }])
+    expect(state.products[0]).toMatchObject({ id: 'db-ring', category: 'Anillos', stockQuantity: 4 })
   })
 
   it('ignores epoch placeholder rate metadata so the default rate remains usable', async () => {
