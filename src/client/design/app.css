@@ -1151,9 +1151,18 @@
 }
 
 .cart-footer {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
   padding: 14px 22px 22px;
   border-top: 1px solid var(--color-border);
   background: var(--color-white);
+}
+
+.cart-footer-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .cart-promo {
@@ -1255,6 +1264,8 @@
 
 .whatsapp-cta {
   width: 100%;
+  flex: 0 0 auto;
+  margin-top: 10px;
 }
 
 .privacy-notice {
@@ -1836,9 +1847,8 @@
 
   .cart-footer {
     max-height: 40dvh;
-    overflow-y: auto;
+    overflow: hidden;
     padding: 9px 18px max(16px, env(safe-area-inset-bottom));
-    overscroll-behavior: contain;
   }
 
   .shipping-selector,
