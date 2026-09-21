@@ -15,6 +15,7 @@ test.describe('CORU golden paths', () => {
     await page.getByRole('button', { name: 'Abrir carrito, 3 productos' }).click()
     await expect(page.getByText('Al generar tu pedido, el monto en Bs mantendrá la tasa asignada hasta finalizar hoy.')).toHaveCount(0)
     await expect(page.locator('.cart-footer-scroll')).toHaveCount(0)
+    await page.getByRole('button', { name: 'Yummy' }).click()
 
     const whatsapp = page.waitForEvent('popup')
     await page.getByRole('button', { name: 'Pedir por WhatsApp' }).click()
@@ -35,23 +36,31 @@ test.describe('CORU golden paths', () => {
     await expect(page.getByRole('listbox', { name: 'Puntos de entrega personales' })).toBeVisible()
   })
 
-  test('mobile: STOCK shipping selector keeps personal list, Yummy fallback and national fields usable', async ({ page }) => {
+  test('mobile: STOCK shipping details expand inline', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto('/')
     await page.getByRole('button', { name: 'Agregar Órbita oscura' }).click()
     await page.getByRole('button', { name: 'Abrir carrito, 1 producto' }).click()
     await expect(page.getByText('Entrega para piezas disponibles')).toBeVisible()
     await expect(page.getByText('Los productos bajo pedido se solicitan por separado')).toHaveCount(0)
-    await expect(page.getByRole('option', { name: /Punto CORU/ })).toBeVisible()
+
+    await page.getByRole('button', { name: 'Personal' }).click()
+    await expect(page.getByRole('region', { name: 'Entrega personal' })).toBeVisible()
+    const pointSelect = page.getByRole('combobox', { name: 'Punto de entrega personal' })
+    await expect(pointSelect).toBeVisible()
+    await pointSelect.click()
+    await expect(page.getByRole('option', { name: /Centro Comercial La Paragua/ })).toBeVisible()
+    await page.getByRole('option', { name: /Centro Comercial La Paragua/ }).click()
 
     await page.getByRole('button', { name: 'Yummy' }).click()
-    await page.getByLabel('Dirección de entrega').fill('Av. Bella Vista, Maracaibo')
-    await page.getByRole('button', { name: 'Consultar costo' }).click()
-    await expect(page.getByText('Costo de delivery a confirmar por WhatsApp.')).toBeVisible()
+    await expect(page.getByRole('region', { name: 'Yummy' })).toHaveCount(0)
+    await expect(page.getByLabel('Dirección de entrega')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Consultar costo' })).toHaveCount(0)
 
-    await page.getByRole('button', { name: 'Nacional' }).click()
-    await page.getByLabel('Estado').fill('Zulia')
-    await page.getByLabel('Ciudad').fill('Maracaibo')
-    await expect(page.getByText('Cobro a destino · cobertura nacional.')).toBeVisible()
+    await page.getByRole('button', { name: 'Envío nacional' }).click()
+    await expect(page.getByRole('button', { name: 'MRW' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'ZOOM' })).toBeVisible()
+    await expect(page.getByLabel('Estado')).toHaveCount(0)
+    await expect(page.getByLabel('Ciudad')).toHaveCount(0)
   })
 })

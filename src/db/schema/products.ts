@@ -6,6 +6,7 @@ export const productTable = {
 
 export const productImageTable = {
   table: 'product_images',
+  requiredColumns: ['sort_order'],
   allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp'],
   maxBytes: 15 * 1024 * 1024,
 } as const

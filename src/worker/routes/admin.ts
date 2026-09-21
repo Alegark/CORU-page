@@ -9,15 +9,15 @@ import { cancelSale, confirmOrder, discardOrder, expirePendingOrders, markPreord
 import { adjustStock, InventoryServiceError, setStock } from '../services/inventory.service'
 import { createHttpRateProvider, getPublicRate, refreshRate, setManualRate, setManualRateMicros, setRateMode, ExchangeRateError } from '../services/exchange-rate.service'
 import { createBinanceP2pProvider } from '../services/exchange-rate/binance-p2p.adapter'
-import { CatalogServiceError, createCategory, createProduct, listAdminProducts, listCategories, updateCategory, updateProduct } from '../services/catalog.service'
+import { CatalogServiceError, createCategory, createProduct, listAdminProducts, listCategories, removeCategory, updateCategory, updateProduct } from '../services/catalog.service'
 import { getSettings, SettingsServiceError, updateSettings, type StoreSettings } from '../services/settings.service'
-import { summarizeAnalytics, summarizeTraffic } from '../services/analytics.service'
+import { resolveAnalyticsDateRange, summarizeAnalytics, summarizeAnalyticsV2, summarizeProductInterest, summarizeTraffic } from '../services/analytics.service'
 import { createPromotion, deactivatePromotion, listPromotions, PromotionServiceError, updatePromotion, type PromotionInput } from '../services/promotion.service'
 import { archiveDeliveryPoint, createDeliveryPoint, DeliveryPointServiceError, listDeliveryPoints, reorderDeliveryPoints, updateDeliveryPoint } from '../services/delivery-points.service'
-import { approveImage, ImageServiceError, processProductImage, retryProductImage, type ImageProcessingProvider } from '../services/image.service'
+import { approveImage, ImageServiceError, orderProductImages, reorderProductImages, retryProductImage, uploadProductImage, type ImageProcessingProvider } from '../services/image.service'
 import { MemoryMediaStore, R2MediaStore, type R2BucketLike } from '../adapters/r2'
 import { PhotoroomImageProcessingProvider } from '../adapters/photoroom'
-import { confirmPersistedOrder, DurableOrderError, hydrateStateFromDatabase, persistCategory, persistDeliveryPoint, persistImage, persistInventorySnapshot, persistOrderStatus, persistProduct, persistProductAndMovement, persistPromotion, persistRate, persistSettings, schedulePersistence } from '../persistence'
+import { confirmPersistedOrder, DurableOrderError, hydrateStateFromDatabase, deleteCategory, persistCategory, persistDeliveryPoint, persistImage, persistInventorySnapshot, persistOrderStatus, persistProduct, persistProductAndMovement, persistPromotion, persistRate, persistSettings, schedulePersistence } from '../persistence'
 
 function summary(order: typeof state.orders[number]): OrderSummary {
   return { id: order.id, reference: order.reference, status: order.status, currency: order.currency, totalCents: order.quote.totalCents, createdAt: order.createdAt, itemCount: order.items.reduce((sum, item) => sum + item.quantity, 0), fulfillmentType: order.fulfillmentTypeSnapshot ?? 'STOCK', expiresAt: order.expiresAt, preorderStage: order.preorderStage, paymentStatus: order.paymentStatus }
@@ -29,7 +29,7 @@ function fail(c: Context<CoruEnv>, error: unknown) {
   if (error instanceof ExchangeRateError) return c.json({ error: { code: error.code, message: error.message } } satisfies ApiError, error.code === 'RATE_INVALID' ? 422 : 503)
   if (error instanceof CatalogServiceError) return c.json({ error: { code: error.code, message: error.message } } satisfies ApiError, error.code === 'NOT_FOUND' ? 404 : error.code === 'CONFLICT' ? 409 : 422)
   if (error instanceof SettingsServiceError) return c.json({ error: { code: error.code, message: error.message } } satisfies ApiError, 422)
-  if (error instanceof ImageServiceError) return c.json({ error: { code: error.code, message: error.message } } satisfies ApiError, error.code === 'IMAGE_TOO_LARGE' || error.code === 'IMAGE_INVALID' || error.code === 'IMAGE_APPROVAL_INVALID' ? 422 : 503)
+  if (error instanceof ImageServiceError) return c.json({ error: { code: error.code, message: error.message } } satisfies ApiError, error.code === 'IMAGE_TOO_LARGE' || error.code === 'IMAGE_INVALID' || error.code === 'IMAGE_APPROVAL_INVALID' || error.code === 'IMAGE_ORDER_INVALID' ? 422 : 503)
   if (error instanceof PromotionServiceError) return c.json({ error: { code: error.code, message: error.message } } satisfies ApiError, error.code === 'NOT_FOUND' ? 404 : error.code === 'CONFLICT' ? 409 : 422)
   if (error instanceof DeliveryPointServiceError) return c.json({ error: { code: error.code, message: error.message } } satisfies ApiError, error.code === 'NOT_FOUND' ? 404 : error.code === 'CONFLICT' ? 409 : 422)
   if (error instanceof DurableOrderError) return c.json({ error: { code: error.code, message: error.message } } satisfies ApiError, error.code === 'NOT_FOUND' ? 404 : 409)
@@ -37,7 +37,7 @@ function fail(c: Context<CoruEnv>, error: unknown) {
 }
 
 export const adminApi = new Hono<CoruEnv>()
-adminApi.use('*', requireAdmin)
+adminApi.use('/api/admin/*', requireAdmin)
 
 adminApi.get('/api/admin/products', (c) => c.json({ data: listAdminProducts(state) } satisfies ApiSuccess<typeof state.products>))
 
@@ -93,7 +93,17 @@ function imageStorage(env: CoruEnv['Bindings']): MemoryMediaStore | R2MediaStore
 
 adminApi.get('/api/admin/products/:id/images', (c) => {
   if (!state.products.some((product) => product.id === c.req.param('id'))) return c.json({ error: { code: 'NOT_FOUND', message: 'Producto no encontrado.' } } satisfies ApiError, 404)
-  return c.json({ data: [...state.images.values()].filter((image) => image.productId === c.req.param('id')) })
+  return c.json({ data: orderProductImages([...state.images.values()].filter((image) => image.productId === c.req.param('id'))) })
+})
+
+adminApi.get('/api/admin/products/:id/images/:imageId/preview', async (c) => {
+  const image = state.images.get(c.req.param('imageId'))
+  if (!image || image.productId !== c.req.param('id')) return c.json({ error: { code: 'NOT_FOUND', message: 'Imagen no encontrada.' } } satisfies ApiError, 404)
+  const variant = image.approvedVariant === 'processed' && image.processedKey ? 'processed' : 'original'
+  const key = variant === 'processed' ? image.processedKey! : image.originalKey
+  const body = await imageStorage(c.env).get?.(key)
+  if (!body) return c.json({ error: { code: 'NOT_FOUND', message: 'Imagen no encontrada.' } } satisfies ApiError, 404)
+  return new Response(body, { status: 200, headers: { 'Content-Type': variant === 'processed' ? 'image/webp' : image.mimeType, 'Cache-Control': 'private, max-age=300', 'X-Content-Type-Options': 'nosniff' } })
 })
 
 adminApi.post('/api/admin/products/:id/images', async (c) => {
@@ -115,13 +125,33 @@ adminApi.post('/api/admin/products/:id/images', async (c) => {
       body = await c.req.raw.arrayBuffer()
       mimeType = c.req.header('X-Image-Mime') ?? mimeType.split(';')[0]
     }
-    const result = await processProductImage({ productId, body, mimeType, storage: imageStorage(c.env), provider: imageProvider(c.env) })
+    const currentImages = orderProductImages([...state.images.values()].filter((image) => image.productId === productId))
+    const result = await uploadProductImage({ productId, body, mimeType, sortOrder: currentImages.length + 1, storage: imageStorage(c.env) })
     state.images.set(result.id, result)
+    const product = state.products.find((entry) => entry.id === productId)
+    if (product) product.primaryImageApproved = true
     const database = c.get('database')
-    // The image record is required by the next approval request and by the
-    // public catalog, so make the durable write part of this response.
-    if (database) await persistImage(database, result)
+    // Normal uploads are immediately visible. Persist the image and the
+    // product's first-image pointer together so a refresh keeps the order.
+    if (database) await Promise.all([persistImage(database, result), ...(product ? [persistProduct(database, state, product)] : [])])
     return c.json({ data: result }, 201)
+  } catch (error) { return fail(c, error) }
+})
+
+adminApi.post('/api/admin/products/:id/images/reorder', async (c) => {
+  const productId = c.req.param('id')
+  const product = state.products.find((entry) => entry.id === productId)
+  if (!product) return c.json({ error: { code: 'NOT_FOUND', message: 'Producto no encontrado.' } } satisfies ApiError, 404)
+  let body: unknown
+  try { body = await c.req.json() } catch { return c.json({ error: { code: 'VALIDATION_ERROR', message: 'JSON inválido.' } } satisfies ApiError, 422) }
+  const ids = body && typeof body === 'object' && Array.isArray((body as { ids?: unknown }).ids) ? (body as { ids: unknown[] }).ids.filter((value): value is string => typeof value === 'string') : []
+  try {
+    const current = orderProductImages([...state.images.values()].filter((image) => image.productId === productId))
+    const reordered = reorderProductImages(current, ids)
+    reordered.forEach((image) => state.images.set(image.id, image))
+    const database = c.get('database')
+    if (database) await Promise.all([...reordered.map((image) => persistImage(database, image)), persistProduct(database, state, product)])
+    return c.json({ data: orderProductImages(reordered) })
   } catch (error) { return fail(c, error) }
 })
 
@@ -190,9 +220,12 @@ adminApi.post('/api/admin/categories/reorder', async (c) => {
 })
 adminApi.delete('/api/admin/categories/:id', (c) => {
   try {
-    const category = updateCategory(state, c.req.param('id'), { active: false })
+    const existing = state.categories.find((category) => category.id === c.req.param('id'))
+    if (!existing) throw new CatalogServiceError('NOT_FOUND', 'Categoría no encontrada.')
+    const hasProducts = state.products.some((product) => product.category === existing.name)
+    const category = hasProducts ? updateCategory(state, existing.id, { active: false }) : removeCategory(state, existing.id)
     const database = c.get('database')
-    if (database) schedulePersistence(c, persistCategory(database, category))
+    if (database) schedulePersistence(c, hasProducts ? persistCategory(database, category) : deleteCategory(database, category.id))
     return c.json({ data: category })
   } catch (error) { return fail(c, error) }
 })
@@ -417,22 +450,29 @@ adminApi.post('/api/admin/settings/rate/refresh', async (c) => {
 
 adminApi.get('/api/admin/analytics', (c) => c.json({ data: summarizeAnalytics(state) }))
 
-function analyticsBoundary(value: string | undefined, endOfDay: boolean): number | undefined {
-  if (!value) return undefined
-  const normalized = /^\d{4}-\d{2}-\d{2}$/.test(value.trim())
-    ? `${value.trim()}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}Z`
-    : value
-  const parsed = Date.parse(normalized)
-  return Number.isNaN(parsed) ? undefined : parsed
+function analyticsRange(c: Context<CoruEnv>): { value: import('../services/analytics.service').ResolvedAnalyticsRange } | { error: Response } {
+  const result = resolveAnalyticsDateRange(c.req.query('from'), c.req.query('to'))
+  if (!result.ok) return { error: c.json({ error: { code: 'VALIDATION_ERROR', message: 'El intervalo de analítica no es válido.', details: result.details } } satisfies ApiError, 422) as Response }
+  return { value: result.value }
 }
+
+adminApi.get('/api/admin/analytics/summary', (c) => {
+  const range = analyticsRange(c)
+  if ('error' in range) return range.error
+  return c.json({ data: summarizeAnalyticsV2(state, state.orders, range.value) })
+})
+
+adminApi.get('/api/admin/analytics/products', (c) => {
+  const range = analyticsRange(c)
+  if ('error' in range) return range.error
+  return c.json({ data: { products: summarizeProductInterest(state, range.value) } })
+})
 
 adminApi.get('/api/admin/analytics/traffic', (c) => {
   const fromRaw = c.req.query('from')
   const toRaw = c.req.query('to')
-  const fromMs = analyticsBoundary(fromRaw, false)
-  const toMs = analyticsBoundary(toRaw, true)
-  if ((fromRaw && fromMs === undefined) || (toRaw && toMs === undefined) || (fromMs !== undefined && toMs !== undefined && fromMs > toMs)) {
-    return c.json({ error: { code: 'VALIDATION_ERROR', message: 'El intervalo de visitas no es válido.' } } satisfies ApiError, 422)
-  }
-  return c.json({ data: summarizeTraffic(state, { ...(fromMs !== undefined ? { fromMs } : {}), ...(toMs !== undefined ? { toMs } : {}) }) })
+  if (!fromRaw && !toRaw) return c.json({ data: summarizeTraffic(state) })
+  const range = analyticsRange(c)
+  if ('error' in range) return range.error
+  return c.json({ data: summarizeTraffic(state, range.value) })
 })

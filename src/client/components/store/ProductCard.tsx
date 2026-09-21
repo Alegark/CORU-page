@@ -6,7 +6,7 @@ import type { Currency, Product } from '../../../shared/types'
 
 export function ProductCard({ product, promotion, onAdd, currency = 'USD', rateMicros = null }: { product: Product; promotion?: PromotionRule | null; onAdd: () => void; currency?: Currency; rateMicros?: number | null }) {
   const isPreorder = (product.fulfillmentType ?? 'STOCK') === 'PREORDER'
-  const promoLabel = isPreorder ? 'Bajo pedido' : promotion === null || !product.promoEligible ? null : promotion?.kind === 'FIXED_DISCOUNT' ? promotion.name : `${promotion?.bundleQuantity ?? 3}×${formatCurrencyAmount(promotion?.bundlePriceCents ?? 1000, currency, rateMicros)}`
+  const promoLabel = isPreorder ? 'Bajo pedido' : promotion === null || !product.promoEligible ? null : promotion?.kind === 'FIXED_DISCOUNT' ? promotion.name : 'Promo Anillos'
   return (
     <article className="product-card">
       <button className="product-card-image" type="button" onClick={() => navigate(`/producto/${product.slug}`)} aria-label={`Ver ${product.name}`}>
@@ -18,8 +18,8 @@ export function ProductCard({ product, promotion, onAdd, currency = 'USD', rateM
           <h3>{product.name}</h3>
           <p>{isPreorder ? `${product.sizeLabel} · 3–4 semanas` : product.sizeLabel}</p>
         </div>
-        <button className="icon-button add-button" type="button" onClick={onAdd} aria-label={`Agregar ${product.name}`}><Icon icon={icons.plus} /></button>
         <strong className="product-price">{formatCurrencyAmount(product.priceCents, currency, rateMicros)}</strong>
+        <button className="icon-button add-button" type="button" onClick={onAdd} aria-label={`Agregar ${product.name}`}><Icon icon={icons.plus} /></button>
       </div>
     </article>
   )

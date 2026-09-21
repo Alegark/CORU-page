@@ -1,9 +1,10 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { loadCart, loadCurrency, saveCart, saveCurrency } from '../../../shared/storage'
 import type { CartLine, Currency, Product } from '../../../shared/types'
 import { ApiClientError, fetchExchangeRate } from '../../api/public'
 import { demoProducts } from '../../../shared/catalog'
 import type { PromotionRule } from '../../../shared/commerce'
+import { analytics } from '../../analytics/client'
 
 const DEFAULT_RATE_MICROS = 36_420_000
 
@@ -31,17 +32,42 @@ export function CartProvider({ children, products = demoProducts, promotion, cat
   const [rateMicros, setRateMicros] = useState<number | null>(DEFAULT_RATE_MICROS)
   const [rateAvailable, setRateAvailable] = useState(true)
   const [rateLoading, setRateLoading] = useState(false)
+  const linesRef = useRef(lines)
+
+  useEffect(() => { linesRef.current = lines }, [lines])
 
   useEffect(() => saveCart(lines), [lines])
 
   useEffect(() => {
     if (!catalogReady) return
-    setLines((current) => current.map((line) => {
+    setLines((current) => {
+      const next = current.map((line) => {
       const product = products.find((candidate) => candidate.id === line.productId)
       const stock = product && (product.fulfillmentType ?? 'STOCK') === 'STOCK' ? product.stockQuantity : undefined
       return stock === undefined ? line : { ...line, quantity: Math.min(line.quantity, stock) }
-    }).filter((line) => products.some((product) => product.id === line.productId) && line.quantity > 0))
+      }).filter((line) => products.some((product) => product.id === line.productId) && line.quantity > 0)
+      linesRef.current = next
+      return next
+    })
   }, [catalogReady, products])
+
+  function updateLines(next: CartLine[]): void {
+    linesRef.current = next
+    setLines(next)
+  }
+
+  function trackIncrement(product: Product, quantityDelta: number): void {
+    if (quantityDelta <= 0) return
+    analytics.track('cart_add', {
+      productId: product.id,
+      productName: product.name,
+      category: product.category,
+      fulfillment_type: product.fulfillmentType ?? 'STOCK',
+      unitPriceCents: product.priceCents,
+      quantityDelta,
+      promoEligible: product.promoEligible,
+    })
+  }
 
   async function refreshRate() {
     if (typeof fetch !== 'function') return
@@ -78,23 +104,34 @@ export function CartProvider({ children, products = demoProducts, promotion, cat
       saveCurrency(next)
     },
     add: (product) => {
-      setLines((current) => {
-        const existing = current.find((line) => line.productId === product.id)
-        if (existing) return current.map((line) => line.productId === product.id ? { ...line, quantity: (product.fulfillmentType ?? 'STOCK') === 'PREORDER' ? line.quantity + 1 : Math.min(product.stockQuantity, line.quantity + 1) } : line)
-        return [...current, { productId: product.id, quantity: 1 }]
-      })
+      const current = linesRef.current
+      const existing = current.find((line) => line.productId === product.id)
+      const previousQuantity = existing?.quantity ?? 0
+      const requestedQuantity = previousQuantity + 1
+      const nextQuantity = (product.fulfillmentType ?? 'STOCK') === 'PREORDER' ? requestedQuantity : Math.min(product.stockQuantity, requestedQuantity)
+      const quantityDelta = nextQuantity - previousQuantity
+      if (quantityDelta <= 0) return
+      const next = existing ? current.map((line) => line.productId === product.id ? { ...line, quantity: nextQuantity } : line) : [...current, { productId: product.id, quantity: nextQuantity }]
+      updateLines(next)
+      trackIncrement(product, quantityDelta)
     },
     setQuantity: (productId, quantity) => {
-      setLines((current) => {
-        if (quantity <= 0) return current.filter((line) => line.productId !== productId)
-        const product = products.find((candidate) => candidate.id === productId)
-        const stock = product && (product.fulfillmentType ?? 'STOCK') === 'STOCK' ? product.stockQuantity : undefined
-        const nextQuantity = Math.floor(quantity)
-        return current.map((line) => line.productId === productId ? { ...line, quantity: stock === undefined ? nextQuantity : Math.min(stock, nextQuantity) } : line).filter((line) => line.quantity > 0)
-      })
+      const current = linesRef.current
+      const existing = current.find((line) => line.productId === productId)
+      if (!existing) return
+      if (quantity <= 0) { updateLines(current.filter((line) => line.productId !== productId)); return }
+      const product = products.find((candidate) => candidate.id === productId)
+      const stock = product && (product.fulfillmentType ?? 'STOCK') === 'STOCK' ? product.stockQuantity : undefined
+      const requestedQuantity = Math.floor(quantity)
+      const nextQuantity = stock === undefined ? requestedQuantity : Math.min(stock, requestedQuantity)
+      if (nextQuantity <= 0) { updateLines(current.filter((line) => line.productId !== productId)); return }
+      const quantityDelta = nextQuantity - existing.quantity
+      if (quantityDelta === 0) return
+      updateLines(current.map((line) => line.productId === productId ? { ...line, quantity: nextQuantity } : line))
+      if (product && quantityDelta > 0) trackIncrement(product, quantityDelta)
     },
-    remove: (productId) => setLines((current) => current.filter((line) => line.productId !== productId)),
-    clear: () => setLines([]),
+    remove: (productId) => updateLines(linesRef.current.filter((line) => line.productId !== productId)),
+    clear: () => updateLines([]),
     itemCount: lines.reduce((sum, line) => sum + line.quantity, 0),
     promotion,
     rateMicros, rateAvailable, rateLoading, refreshRate,

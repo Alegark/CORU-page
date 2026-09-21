@@ -167,3 +167,15 @@ export function updateCategory(state: CoruState, categoryId: string, input: Part
   if (input.active !== undefined) category.active = Boolean(input.active)
   return category
 }
+
+/** Permanently removes an unused category. Categories with products or
+ * promotion rules remain archive-only so their historical references stay
+ * intact. */
+export function removeCategory(state: CoruState, categoryId: string): Category {
+  const category = state.categories.find((candidate) => candidate.id === categoryId)
+  if (!category) throw new CatalogServiceError('NOT_FOUND', 'Categoría no encontrada.')
+  if (state.products.some((product) => product.category === category.name)) throw new CatalogServiceError('CONFLICT', 'No puedes eliminar una categoría que tiene productos.')
+  if (state.promotions.some((promotion) => promotion.targetCategory === category.name)) throw new CatalogServiceError('CONFLICT', 'No puedes eliminar una categoría vinculada a una promoción.')
+  state.categories = state.categories.filter((candidate) => candidate.id !== categoryId)
+  return { ...category, active: false }
+}

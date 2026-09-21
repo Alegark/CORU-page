@@ -1,5 +1,6 @@
 import { convertUsdCentsToBs, quoteCart, type PromotionRule } from '../../shared/commerce'
 import type { CartLine, Currency, CommerceQuote, FulfillmentType, Order, OrderPayment, PaymentKind, ShippingSelection, ShippingSnapshot } from '../../shared/types'
+import { formatWhatsappOrderMessage } from '../../shared/whatsapp'
 import type { CoruState } from '../state'
 import { consumeForOrder, InventoryServiceError, reverseSaleForOrder } from './inventory.service'
 import { endOfCaracasDay, getUsableRate, ExchangeRateError } from './exchange-rate.service'
@@ -48,19 +49,9 @@ function appendAudit(order: Order, action: NonNullable<Order['audit']>[number]['
 }
 
 function buildWhatsappUrl(state: CoruState, order: Pick<Order, 'reference' | 'items' | 'quote' | 'fulfillmentTypeSnapshot' | 'shipping' | 'depositUsdCents' | 'balanceUsdCents' | 'leadTimeSnapshot'>, totalBs?: number): string {
-  const promotionLine = order.quote.appliedPromotion ? `Promo: ${order.quote.appliedPromotion.name} (${order.quote.appliedPromotion.groupsApplied} combo${order.quote.appliedPromotion.groupsApplied > 1 ? 's' : ''})` : ''
   const intro = state.settings?.whatsappIntro ?? 'Hola, quiero pedir estos productos de CORU.'
   const phone = state.settings?.whatsappPhone ?? '584120000000'
-  const lines = [intro, `Referencia: ${order.reference}`, order.fulfillmentTypeSnapshot === 'PREORDER' ? 'Modalidad: Bajo pedido' : 'Modalidad: Disponible', ...order.items.map((item) => `${item.quantity}× ${item.name}`), promotionLine, `Total USD: $${(order.quote.totalCents / 100).toFixed(2)}`]
-  if (order.fulfillmentTypeSnapshot === 'PREORDER') {
-    lines.push(`Tiempo estimado: ${order.leadTimeSnapshot ?? DEFAULT_PREORDER_LEAD_TIME}`, `Anticipo (50%): $${((order.depositUsdCents ?? Math.floor(order.quote.totalCents / 2)) / 100).toFixed(2)}`, `Saldo al entregar: $${((order.balanceUsdCents ?? order.quote.totalCents - Math.floor(order.quote.totalCents / 2)) / 100).toFixed(2)}`)
-  } else if (order.shipping) {
-    if (order.shipping.method === 'PERSONAL') lines.push('Entrega: Personal', `Punto: ${order.shipping.deliveryPointName ?? order.shipping.deliveryPointId}`, ...(order.shipping.deliveryPointAddress ? [`Dirección: ${order.shipping.deliveryPointAddress}`] : []))
-    if (order.shipping.method === 'NATIONAL') lines.push(`Envío nacional: ${order.shipping.carrier}`, `Estado: ${order.shipping.state}`, `Ciudad: ${order.shipping.city}`, ...(order.shipping.officeText ? [`Oficina: ${order.shipping.officeText}`] : []), 'Modalidad: Cobro a destino')
-    if (order.shipping.method === 'YUMMY') lines.push('Entrega: Yummy', `Destino: ${order.shipping.addressText}`, ...(order.shipping.quoteAmountMinor === undefined ? ['Costo del delivery: por confirmar', 'La tarifa de Yummy se calcula al solicitar el servicio y puede variar según la hora y disponibilidad.'] : [`Delivery estimado al generar el pedido: ${order.shipping.quoteCurrency ?? 'Bs'} ${((order.shipping.quoteAmountMinor ?? 0) / 100).toFixed(2)}`, 'La tarifa puede variar al momento de solicitar el servicio.']))
-  }
-  if (totalBs !== undefined) lines.push(`Total Bs: Bs ${(totalBs / 100).toFixed(2)}`, 'Tasa asegurada para tu pedido hasta finalizar hoy.')
-  return `https://wa.me/${phone}?text=${encodeURIComponent(lines.filter(Boolean).join('\n'))}`
+  return `https://wa.me/${phone}?text=${encodeURIComponent(formatWhatsappOrderMessage(order, { intro, totalBs }))}`
 }
 
 function getOrder(state: CoruState, orderId: string): Order {

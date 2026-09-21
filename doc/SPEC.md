@@ -43,10 +43,10 @@ CORU v1.1 ! preservar tienda/admin v1 + añadir productos PREORDER, entrega STOC
 - C37: bundle grouping determinista: eligible units sort price desc, tie product id; cada group N → discount=`max(0,sum(unit)-bundlePrice)`.
 - C38: ⊥ promo stacking v1. Admin ! impedir active overlap sobre mismo target/rango.
 - C39: product/cart/order prices ! server recalculation; request client ⊥ trusted.
-- C40: image pipeline ! existing provider, abstraction `ImageProcessingProvider`; adapter v1 Photoroom; output blanco.
-- C41: image input v1 = JPG/PNG/WEBP ≤15 MB; original ! R2 retained.
-- C42: processed image target ! 1200×1200, white `#FFFFFF`, subject centered, padding ≈12%, WebP/JPEG optimized.
-- C43: admin ! approve processed or choose original; public uses approved `primary_image_id`.
+- C40: image upload v1 ! guardar el archivo original tal como se sube; no quitar fondo ni aplicar un procesador automático.
+- C41: image input v1 = JPG/PNG/WEBP ≤15 MB; original ! R2 retained; UI recomienda 1200×1200 px sin convertirlo en requisito.
+- C42: cada `product_image` ! `sort_order`; el panel permite subir/bajar imágenes y persiste el orden.
+- C43: primera imagen aprobada por el flujo directo ! `primary_image_id`; el público puede recibir la galería ordenada y usa la primera como principal.
 - C44: image failure ⊥ blocks editing product; product cannot be public without approved primary image.
 - C45: design source ! `design/DESIGN.md` + `design/CORU_Design_System_v1.html`; if conflict functionality→SPEC, presentation→DESIGN.
 - C46: brand master ! exact mascot/logo assets. ⊥ redraw/regenerate mascot; exactly 3 mint rays.
@@ -107,11 +107,11 @@ CORU v1.1 ! preservar tienda/admin v1 + añadir productos PREORDER, entrega STOC
 - C101: Yummy adapter only after official current docs+credentials validate contract; otherwise non-blocking copy = `Costo de delivery a confirmar por WhatsApp.`
 - C102: Yummy quote = referential snapshot; ⊥ guaranteed/frozen/day-valid/rate-lock; destination change → stale + explicit re-quote.
 - C103: Yummy quote ⊥ merchandise total/promo/revenue; optional estimated total including delivery ! informational only.
-- C104: NATIONAL ! STOCK + all Venezuela; carrier `MRW|ZOOM`, state+city required, office optional, `Cobro a destino`.
+- C104: NATIONAL ! STOCK + all Venezuela; new public selection requires only carrier `MRW|ZOOM`; recipient/state/city/office details are coordinated by WhatsApp; historical location snapshots may remain nullable/readable; `Cobro a destino`.
 - C105: MRW/ZOOM v1 ⊥ API/tariff/time estimate/guide creation/tracking; shipping fee ⊥ CORU total/revenue.
 - C106: size guide ! public `/guia-de-tallas`, direct URL, Product Detail + footer/secondary link, mobile-first, no account/data capture.
 - C107: guide units ! mm; method A inner diameter edge-interior→edge-interior, ⊥ metal thickness; method B finger circumference via non-elastic strip/thread/tape.
-- C108: guide ⊥ unverified US/EU conversion table; compare only verified product measurements.
+- C108: guide ⊥ unverified US/EU conversion table; the owner-approved CORU US 5–10 reference table (15.7–19.8 mm inner diameter and 49.3–62.1 mm circumference) is the sole approved exception and must not be expanded with inferred conversions; compare other measurements only against verified product data.
 - C109: guide assets ! 2 own vector/SVG illustrations: ring+rule+inner-diameter arrows; finger+strip+mark+rule; white/black/Mint `#39F79B`; ⊥ mascot geometry reuse.
 - C110: shipping/payment PII ⊥ analytics + frontend logs; store only operational minimum; privacy notice ! cover delivery data.
 - C111: PREORDER metrics ! separate order value, cash collected, balance pending; uncollected balance ⊥ cash/revenue received.
@@ -146,7 +146,7 @@ CORU v1.1 ! preservar tienda/admin v1 + añadir productos PREORDER, entrega STOC
 - I7 page: `/admin/productos` → products table/cards + search/status/category/order + stock.
 - I8 page: `/admin/productos/nuevo` → product editor.
 - I9 page: `/admin/productos/:id` → product editor existing.
-- I10 page: `/admin/productos/:id/imagenes` → original/processed preview + pipeline/retry/approve.
+- I10 page: `/admin/productos/:id/imagenes` → original previews + recommended dimensions + explicit gallery ordering.
 - I11 page: `/admin/categorias` → CRUD+ordering.
 - I12 page: `/admin/promociones` → promotion list.
 - I13 page: `/admin/promociones/nueva|:id` → promotion editor + rule preview.
@@ -178,9 +178,9 @@ CORU v1.1 ! preservar tienda/admin v1 + añadir productos PREORDER, entrega STOC
 - I39 api admin: `PATCH /api/admin/products/:id` → fields incl `stockQuantity`.
 - I40 api admin: `DELETE /api/admin/products/:id` → soft/archive preferred if referenced; hard delete only never-referenced.
 - I41 api admin: `POST /api/admin/products/:id/stock-adjustments` body `{mode:"set"|"delta",quantity,note?}`.
-- I42 api admin: `POST /api/admin/products/:id/images` multipart → store original + return image id/status.
-- I43 api admin: `POST /api/admin/images/:id/process` → provider process, processed key/status.
-- I44 api admin: `POST /api/admin/images/:id/approve` body `{variant:"processed"|"original"}`.
+- I42 api admin: `POST /api/admin/products/:id/images` raw/multipart → store original immediately as ready/approved + return image id/status/order.
+- I43 api admin: `POST /api/admin/products/:id/images/reorder` body `{ids:string[]}` → persist explicit gallery order.
+- I44 api public: `GET /api/products/:slug/images/:imageId` → serve an approved ordered image; `/image` remains the primary-image shortcut.
 - I45 api admin: categories CRUD + `PATCH /api/admin/categories/reorder`.
 - I46 api admin: promotions CRUD; create/update ! conflict validation.
 - I47 api admin: `GET /api/admin/orders?status=&fulfillmentType=&q=&from=&to=&page=` → paginated; due PENDING lazily expires before serialization.
@@ -198,7 +198,7 @@ CORU v1.1 ! preservar tienda/admin v1 + añadir productos PREORDER, entrega STOC
 - I59 api admin: `PUT /api/admin/exchange-rate/mode` body automatic|manual + manualRate?; response ⊥ provider name.
 - I60 api: success envelope `{data:T}`; error envelope `{error:{code,message,details?}}`.
 - I61 http: invalid body/query→422; unauth/invalid Access→403; missing→404; conflict→409; throttled→429; external dependency unavailable→503.
-- I62 env required prod: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `R2_* binding`, `TEAM_DOMAIN`, `POLICY_AUD`, `PHOTOROOM_API_KEY`, `DEVICE_TOKEN_SECRET`, `ABUSE_HMAC_SECRET`, `WHATSAPP_DEFAULT_NUMBER?`.
+- I62 env required prod: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `R2_* binding`, `TEAM_DOMAIN`, `POLICY_AUD`, `DEVICE_TOKEN_SECRET`, `ABUSE_HMAC_SECRET`, `WHATSAPP_DEFAULT_NUMBER?`.
 - I63 env internal rate adapter needs no API key for public quote endpoint; URL/constants server-only.
 - I64 cron: `*/10 * * * *` rate refresh; `*/15 * * * *` overdue PENDING expiry sweep; action/read paths also enforce exact `expires_at`.
 - I65 cron: daily analytics retention cleanup.
@@ -206,7 +206,7 @@ CORU v1.1 ! preservar tienda/admin v1 + añadir productos PREORDER, entrega STOC
 - I67 file: `src/db/schema/*` tables separated by domain.
 - I68 db `categories`: `id,slug,name,is_active,sort_order,created_at,updated_at`.
 - I69 db `products`: `id,sku,slug,name,description,category_id,price_cents,size_label,stock_quantity,is_active,promo_eligible,sort_order,primary_image_id,created_at,updated_at`.
-- I70 db `product_images`: `id,product_id,original_key,processed_key,status,approved_variant,mime,width,height,created_at,updated_at`.
+- I70 db `product_images`: `id,product_id,original_key,processed_key,sort_order,status,approved_variant,mime,width,height,created_at,updated_at`.
 - I71 db `promotions`: `id,name,type,target_category_id,quantity_required,bundle_price_cents,fixed_discount_cents,allow_mixed,repeatable,banner_enabled,banner_title,banner_subtitle,banner_cta,is_active,starts_at,ends_at,created_at,updated_at`.
 - I72 db `orders`: `id,reference,idempotency_key,status,currency,subtotal_usd_cents,discount_usd_cents,total_usd_cents,promotion_id,promotion_name_snapshot,initial_rate_micros,current_rate_micros,initial_total_ves_minor,current_total_ves_minor,rate_locked_at,rate_valid_until,source,session_id,created_at,expires_at,confirmed_at,discarded_at,cancelled_at,discard_reason,cancel_reason`.
 - I73 db `order_items`: `id,order_id,product_id,sku_snapshot,name_snapshot,size_snapshot,unit_price_cents,quantity,line_subtotal_cents`.
@@ -237,13 +237,13 @@ CORU v1.1 ! preservar tienda/admin v1 + añadir productos PREORDER, entrega STOC
 - I98 UI: `PersonalDeliveryPointCard` → name/address/description?/schedule?/selected; list ! keyboard/selectable independent from map.
 - I99 UI: `PersonalDeliveryPointMap|MapContainer` → points+selected+onSelect; provider-neutral, accessible list fallback.
 - I100 UI: `DeliveryQuoteNotice` states `idle|loading|quoted|stale|unavailable|error`; copy ! estimated/subject to change.
-- I101 UI: `NationalCarrierSelector` → carrier `MRW|ZOOM` + state + city + office?; `Cobro a destino` notice.
+- I101 UI: `NationalCarrierSelector` → carrier `MRW|ZOOM` only + coordination/cobro-a-destino notice; no public state/city/office inputs.
 - I102 UI: `SizeGuideStep` → step number/title/short text/illustration slot.
 - I103 UI: `MeasurementIllustrationContainer` → SVG/vector + accessible title/description + text fallback.
 - I104 api public: `GET /api/catalog` public product adds `fulfillmentType,material?,measurementsText?,innerDiameterMm?,circumferenceMm?`; STOCK visibility uses I21, PREORDER uses C80.
 - I105 api public: `GET /api/personal-delivery-points` → active points sorted only `{id,name,address,shortDescription?,latitude,longitude,scheduleText?,sortOrder}`.
 - I106 api public?: `POST /api/shipping/yummy/quote` exists only behind verified official adapter; body `{addressText,latitude?,longitude?}`; origin server-owned; response `{status:"quoted",amountMinor,currency,quotedAt,externalId?}|{status:"unavailable"}`; ⊥ secret/provider internals.
-- I107 order request STOCK: `{items,currency,shipping:{method:"PERSONAL",deliveryPointId}|{method:"YUMMY",addressText,latitude?,longitude?,quoteReference?}|{method:"NATIONAL",carrier:"MRW"|"ZOOM",state,city,officeText?},sessionId?,source?}`.
+- I107 order request STOCK: `{items,currency,shipping:{method:"PERSONAL",deliveryPointId}|{method:"YUMMY",addressText,latitude?,longitude?,quoteReference?}|{method:"NATIONAL",carrier:"MRW"|"ZOOM"},sessionId?,source?}`; legacy National location fields may be accepted optionally for compatibility but are not required for new orders.
 - I108 order request PREORDER: `{items,currency,sessionId?,source?}`; `shipping` ! absent/null; server ! reject mixed fulfillment lines 409 `MIXED_FULFILLMENT`.
 - I109 order response common adds `fulfillmentType`; PREORDER adds `depositUsdCents,balanceUsdCents,preorderStage,paymentStatus,leadTimeSnapshot`; STOCK adds shipping snapshot.
 - I110 order error: 409 `FULFILLMENT_CHANGED` → `{items:[{productId,expected,current}]}`; client ! preserve cart + explain reclassification.
@@ -266,7 +266,7 @@ CORU v1.1 ! preservar tienda/admin v1 + añadir productos PREORDER, entrega STOC
 - I127 WhatsApp PERSONAL: reference/items/promo/USD(+VES) totals + `Entrega: Personal` + configured point name/address.
 - I128 WhatsApp YUMMY quoted: reference/items/promo/USD(+VES) merchandise totals + destination + quoted amount/time + variable-tariff disclaimer.
 - I129 WhatsApp YUMMY fallback: reference/items/promo/USD(+VES) merchandise totals + destination + `Costo del delivery: por confirmar`.
-- I130 WhatsApp NATIONAL: reference/items/promo/USD(+VES) merchandise totals + carrier/state/city/office? + `Modalidad: Cobro a destino`; ⊥ tariff.
+- I130 WhatsApp NATIONAL: reference/items/promo/USD(+VES) merchandise totals + carrier + `Datos del destinatario y oficina: por coordinar por WhatsApp` + `Modalidad: Cobro a destino`; historical location snapshots may be included; ⊥ tariff.
 - I131 WhatsApp PREORDER: `Modalidad: Bajo pedido`, reference, items, `3–4 semanas`, total USD, deposit 50%, balance; selected Bs may include current deposit equivalent; ⊥ shipping/Yummy/MRW/ZOOM/provider/origin/logistics.
 - I132 guide method A: choose fitting ring → flat surface → mm rule → measure inner edge-to-inner edge → exclude metal → repeat; result inner diameter mm.
 - I133 guide method B: thin paper/non-elastic thread/flexible tape → wrap target finger without overtightening → mark meeting point → lay flat on mm rule → repeat; result approximate circumference mm.
@@ -275,7 +275,7 @@ CORU v1.1 ! preservar tienda/admin v1 + añadir productos PREORDER, entrega STOC
 - I136 analytics events add `size_guide_view,shipping_method_selected,yummy_quote_requested,yummy_quote_succeeded,yummy_quote_failed,preorder_intent_created,preorder_deposit_recorded,preorder_ready,preorder_completed`; product/order events may add allowlisted `fulfillment_type`.
 - I137 analytics forbidden keys/data add address, coordinates, city, office, personal/payment notes, paid amounts/payment details.
 - I138 UX PREORDER states: created/deposit pending/deposit recorded/in process/ready/balance pending/completed/cancelled.
-- I139 UX shipping states: Yummy idle/loading/quoted/stale/unavailable/error; Personal none/selected/deactivated; National carrier missing/destination incomplete.
+- I139 UX shipping states: Yummy idle/loading/quoted/stale/unavailable/error; Personal none/selected/deactivated; National carrier missing/selected; shipping details live in a reversible nested panel.
 - I140 migration: existing products/orders → `fulfillment_type=STOCK`; migration reversible; historical snapshots preserved.
 - I141 api admin STOCK: `POST /api/admin/orders/:id/cancel-sale` + `Idempotency-Key` body `{reason}` → atomic status CANCELLED + SALE_REVERSAL movements + stock restore; 409 `ORDER_NOT_CONFIRMED|SALE_ALREADY_CANCELLED|SALE_REVERSAL_CONFLICT`.
 - I142 http cookie: `Set-Cookie: coru_device=<opaque-signed-token>; Max-Age=2592000; Path=/; HttpOnly; Secure; SameSite=Lax`; validation/server issuance ! before limiter key derivation.
@@ -346,9 +346,9 @@ R13|Recovery provenance|downloaded malformed SPEC = 1,055 duplicate R9 records, 
 - V26: analytics payload ⊥ PII.
 - V27: order creation success ! persist before returning WhatsApp URL.
 - V28: WhatsApp URL ! generated server-side from server quote/order snapshot.
-- V29: image original ! retained if processing fails.
-- V30: processed image approved only after valid object stored in R2.
-- V31: product public image ! points to approved object; failed/processing image ⊥ public primary.
+- V29: new image upload ! original stored in R2 without background processing.
+- V30: gallery reorder ! all product image positions remain unique and persisted.
+- V31: product public image ! points to the first approved ordered object; failed/unapproved image ⊥ public primary.
 - V32: logo/mascot geometry ! exact supplied asset; ⊥ generated replacement.
 - V33: dark mode classes/tokens ⊥ production requirement v1.
 - V34: UI touch action ≥44px where interactive mobile.
@@ -413,13 +413,13 @@ R13|Recovery provenance|downloaded malformed SPEC = 1,055 duplicate R9 records, 
 - V93: YUMMY → typed destination required; quote optional; missing credentials/provider failure → fallback + order creation remains available.
 - V94: Yummy quote snapshot ! referential only; merchandise total/promo/canonical revenue unchanged; ⊥ guaranteed/frozen copy.
 - V95: Yummy destination/coordinates change → previous quote stale; current estimate requires explicit re-quote.
-- V96: NATIONAL → carrier `MRW|ZOOM` + state+city; office optional; `Cobro a destino` always visible.
+- V96: NATIONAL → new public order requires carrier `MRW|ZOOM` only; recipient/state/city/office are coordinated through WhatsApp; `Cobro a destino` always visible; historical snapshots remain readable.
 - V97: NATIONAL → web-calculated tariff/time/tracking/guide = none; carrier fee ⊥ CORU merchandise total/revenue.
 - V98: client shipping point/price/quote/carrier validation ⊥ authority; server revalidates all method data.
 - V99: generated WhatsApp message ! variant I127-I131 matching persisted server snapshot; ⊥ raw coordinates/provider secrets.
 - V100: `/guia-de-tallas` direct public route ! reachable without account + linked Product Detail+footer/secondary mobile navigation.
 - V101: guide ! inner diameter + finger circumference steps in mm; diameter means inner edge→inner edge, ⊥ outer diameter.
-- V102: guide ⊥ unverified international conversion table + ⊥ customer measurement persistence/form requirement.
+- V102: guide ⊥ unverified international conversion table + ⊥ customer measurement persistence/form requirement; the exact owner-approved CORU US 5–10 table is permitted as a static reference and is not a customer measurement form.
 - V103: guide assets ! accessible mobile-readable vector/text fallback; ⊥ logo/mascot geometry modification/reuse.
 - V104: analytics allowlist may receive fulfillment/shipping method non-PII; ⊥ address/coordinates/city/office/notes/payment data.
 - V105: PREORDER admin metrics → order value, recorded cash, outstanding balance distinct; unrecorded balance ⊥ collected revenue.
@@ -461,7 +461,7 @@ T4|.|build API foundation: Hono groups/Zod/error envelope/server abuse guard|C62
 T5|.|build Cloudflare Access JWT middleware/admin route protection|C5,I35,V1,R4,R5
 T6|.|build catalog/categories public API + admin CRUD + product availability|I26-I27,I36-I45,V2,V38
 T7|.|build inventory service/movements + admin stock UI|C20-C25,I41,I74,V3-V8,V40,V41
-T8|.|build R2 image upload + Photoroom adapter + approve flow|C40-C44,I42-I44,I81,V29-V31,R7
+T8|.|build R2 original image upload + ordered gallery flow|C40-C44,I42-I44,I81,V29-V31
 T9|.|build promotion engine + admin promotion CRUD/conflict validation|C34-C38,I46,I79,V19-V22
 T10|.|build exchange-rate provider/cache/cron/manual fallback/admin settings|C10-C18,I28,I58-I59,I64,I80,V12-V18,V42-V44,R8
 T11|.|build cart/currency/source/privacy state + public Store Home/Product|I1-I5,I18-I25,I85-I90,V24,V34-V36,V45-V46,V69
@@ -494,6 +494,7 @@ T37|x|build exact 72h pending expiry sweep + lazy enforcement + status audit|C11
 T38|x|build signed device cookie + atomic device/IP antiabuse counters + 429/503 Store feedback|C121-C125,I142-I144,I147-I148,V121-V126
 T39|~|build `cancel-sale`: STOCK atomic SALE_REVERSAL restock; PREORDER no-restock cancellation|C117-C120,I141,I146,I149,V117-V120,V127-V128
 T40|x|isolate Store/Admin client loading: move admin route tree+data loaders behind lazy boundary, split admin-only API/CSS/dependencies, inspect Vite production chunk graph + public Playwright/network requests; record main public chunk sizes|C126-C131,V129-V133
+T41|x|redesign STOCK cart shipping as compact nested panel; make new NATIONAL requests carrier-only; preserve historical snapshots; verify responsive/focus/motion/WhatsApp behavior|C97-C105,I97-I107,I130,I139,V88-V99
 
 ## §B BUGS
 id|date|cause|fix

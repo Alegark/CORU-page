@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { approveImage, ImageServiceError, processProductImage, retryProductImage, type ImageProcessingProvider, type ImageStorage } from '../src/worker/services/image.service'
+import { approveImage, ImageServiceError, processProductImage, reorderProductImages, retryProductImage, uploadProductImage, type ImageProcessingProvider, type ImageStorage } from '../src/worker/services/image.service'
 
 function storage() {
   const objects = new Map<string, ArrayBuffer>()
@@ -13,6 +13,26 @@ function storage() {
 const okProvider: ImageProcessingProvider = { process: async () => new Uint8Array([1, 2, 3]).buffer }
 
 describe('product image pipeline', () => {
+  it('stores a normal upload as the approved original without invoking a processor', async () => {
+    const target = storage()
+    const record = await uploadProductImage({ productId: 'orbita-oscura', body: new Uint8Array([1, 2]), mimeType: 'image/png', sortOrder: 2, storage: target.adapter, now: new Date('2026-09-20T12:00:00.000Z') })
+
+    expect(record.processingStatus).toBe('READY')
+    expect(record.approvedVariant).toBe('original')
+    expect(record.processedKey).toBeUndefined()
+    expect(record.sortOrder).toBe(2)
+    expect(target.objects.has(record.originalKey)).toBe(true)
+  })
+
+  it('reorders all product images into the requested positions', () => {
+    const images = [
+      { id: 'first', productId: 'p', originalKey: 'first', mimeType: 'image/jpeg' as const, byteSize: 1, processingStatus: 'READY' as const, approvedVariant: 'original' as const, sortOrder: 1, createdAt: '2026-09-20T10:00:00.000Z', updatedAt: '2026-09-20T10:00:00.000Z' },
+      { id: 'second', productId: 'p', originalKey: 'second', mimeType: 'image/jpeg' as const, byteSize: 1, processingStatus: 'READY' as const, approvedVariant: 'original' as const, sortOrder: 2, createdAt: '2026-09-20T11:00:00.000Z', updatedAt: '2026-09-20T11:00:00.000Z' },
+    ]
+
+    expect(reorderProductImages(images, ['second', 'first']).map((image) => [image.id, image.sortOrder])).toEqual([['second', 1], ['first', 2]])
+  })
+
   it('stores original before processing and returns a ready record', async () => {
     const target = storage()
     const record = await processProductImage({ productId: 'orbita-oscura', body: new Uint8Array([1, 2]), mimeType: 'image/jpeg', storage: target.adapter, provider: okProvider })

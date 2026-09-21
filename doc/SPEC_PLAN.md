@@ -6,7 +6,7 @@
 
 **Architecture:** One Cloudflare-deployed TypeScript project. React SPA serves public Store and `/admin`; Hono Worker owns all business authority and external integrations. Turso/libSQL stores business data, R2 stores originals/derivatives, Cloudflare Access protects admin paths, and domain services isolate pricing, rate, image and inventory rules.
 
-**Tech Stack:** pnpm · React · TypeScript strict · Vite · Tailwind · React Router · TanStack Query · React Hook Form · Zod · Hono · Cloudflare Vite Plugin/Workers/Static Assets/R2/Access · Turso/libSQL · Drizzle ORM · jose · Photoroom adapter · Vitest · Testing Library · Playwright.
+**Tech Stack:** pnpm · React · TypeScript strict · Vite · Tailwind · React Router · TanStack Query · React Hook Form · Zod · Hono · Cloudflare Vite Plugin/Workers/Static Assets/R2/Access · Turso/libSQL · Drizzle ORM · jose · Vitest · Testing Library · Playwright.
 
 **Spec:** `./SPEC.md`  
 **Visual contract:** `../design/DESIGN.md`
@@ -372,37 +372,31 @@ consumeForOrder(tx, orderItems)
 
 ---
 
-## Task 8 — Image storage and processing
+## Task 8 — Image storage and gallery ordering
 
 **Files**
 - R2 adapter.
-- `ImageProcessingProvider` interface.
-- `PhotoroomImageProcessingProvider`.
-- image upload/process/approve endpoints.
-- admin Image Processor UI.
+- direct original image upload endpoint.
+- `sort_order` persistence and reorder endpoint.
+- admin gallery UI with previews and up/down controls.
 
 **Input**
 - JPG/PNG/WEBP.
 - max 15MB.
 - original always saved first.
 
-**Provider request intent**
-- remove background.
-- white background `FFFFFF`.
-- square output `1200x1200`.
-- ~12% padding.
-- no decorative shadow.
-- optimized output.
+**Display guidance**
+- recommend 1200×1200 px in the admin UI.
+- preserve the uploaded composition and background exactly as provided.
 
 **R2 keys**
 ```text
 products/{productId}/original/{imageId}.{ext}
-products/{productId}/processed/{imageId}.webp
 ```
 
 **Failure**
-- preserve original.
-- status `FAILED`.
+- the original is the public approved variant for new uploads.
+- legacy processed records remain readable for compatibility.
 - allow retry.
 - allow approve original.
 
@@ -1071,7 +1065,8 @@ confirmed sale makes it CANCELLED. Do not collapse these outcomes.
 
 - require shipping selection for STOCK order creation;
 - implement PERSONAL with active Maracaibo delivery points;
-- implement NATIONAL with MRW/ZOOM, state, city and optional office;
+- implement NATIONAL with MRW/ZOOM carrier selection only; coordinate recipient,
+  state/city and office details through WhatsApp;
 - document NATIONAL coverage as all Venezuela and Yummy/PERSONAL initial scope
   as Maracaibo;
 - preserve destination-charge and no-tariff/no-time/no-tracking rules;
@@ -1171,6 +1166,30 @@ confirmed sale makes it CANCELLED. Do not collapse these outcomes.
 
 **Commit:** `chore: release fulfillment expansion`
 
+## Follow-up — compact cart shipping selector
+
+Read and implement `docs/superpowers/plans/2026-09-18-coru-cart-shipping-subpanel.md`.
+It is the current UI/UX and contract brief for the public STOCK cart. It keeps the shipping choice
+inline in the footer and expands only the options needed by Personal or Envío nacional; Yummy keeps
+only its address field. Products, totals and the WhatsApp CTA remain visible. It also supersedes the older NATIONAL state/city/office inputs:
+new requests require only `carrier: MRW|ZOOM`, while nullable historical snapshots remain readable.
+
+The brief is implemented in the current working tree and covered by the responsive,
+accessibility, contract and WhatsApp tests described there. It must remain part of the release
+checklist before any production publication.
+
+## Follow-up — anonymous catalog analytics
+
+- persist an anonymous browser identifier without collecting IP, contact or device-token data;
+- count `Visitantes únicos` once per identifier in the selected range;
+- count `Visitas totales` from every `catalog_view` event in the selected range;
+- exclude `product_view` and `size_guide_view` events from the general visit total;
+- ignore historical catalog events without a visitor identifier for unique-visitor metrics;
+- retain product-interest metrics separately from the general catalog visit KPI;
+- keep the one-time pre-today analytics cleanup documented and disabled after execution.
+
+**Verification:** 116 tests, typecheck, production build, Worker dry-run and Cloudflare smoke passed on 21-09-2026.
+
 ---
 
 # 3. Definition of done
@@ -1187,7 +1206,7 @@ Project is not done until:
 - 3x$10 server quote and Store preview agree;
 - VES rate lock survives live-rate changes same day;
 - expired VES rate blocks sale confirmation;
-- original/processed images survive failure paths correctly;
+- original images and their explicit gallery order survive persistence;
 - mobile 390px and desktop 1440px golden flows pass;
 - Cloudflare Access blocks admin without valid JWT;
 - build/typecheck/tests pass;

@@ -139,6 +139,7 @@ export type AdminImageRecord = {
   processedKey?: string
   mimeType: 'image/jpeg' | 'image/png' | 'image/webp'
   byteSize: number
+  sortOrder: number
   processingStatus: 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED'
   approvedVariant?: 'original' | 'processed'
   errorCode?: string
@@ -148,6 +149,10 @@ export type AdminImageRecord = {
 
 export function fetchAdminImages(productId: string, signal?: AbortSignal): Promise<AdminImageRecord[]> {
   return requestJson<AdminImageRecord[]>(`/api/admin/products/${encodeURIComponent(productId)}/images`, { signal })
+}
+
+export function reorderAdminImages(productId: string, ids: string[], signal?: AbortSignal): Promise<AdminImageRecord[]> {
+  return requestJson<AdminImageRecord[]>(`/api/admin/products/${encodeURIComponent(productId)}/images/reorder`, { method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) })
 }
 
 export async function uploadAdminImage(productId: string, file: File, signal?: AbortSignal): Promise<AdminImageRecord> {
@@ -191,6 +196,43 @@ export function fetchAdminTraffic(range?: { from?: string; to?: string }, signal
   if (range?.to) params.set('to', range.to)
   const query = params.toString()
   return requestJson<AdminTrafficSummary>(`/api/admin/analytics/traffic${query ? `?${query}` : ''}`, { signal })
+}
+
+export type AdminAnalyticsRange = { from?: string; to?: string }
+export type AdminAnalyticsProductInterest = {
+  productId: string
+  name: string
+  views: number
+  unitsAdded: number
+  addSessions: number
+  interestScore: number
+  relativeInterestPct: number
+}
+export type AdminAnalyticsSummaryV2 = {
+  range: { from: string; to: string; timezone: 'America/Caracas' }
+  kpis: { uniqueVisits: number; totalVisits: number; uniqueDevices: number; unitsAdded: number; whatsappIntents: number }
+  commercial: { unitsAdded: number; potentialValueCents: number; potentialValueEstimated: boolean; whatsappPerAddPct: number }
+  funnel: { catalogSessions: number; productViewSessions: number; addSessions: number; whatsappSessions: number; confirmedOrders: number }
+  sources: Array<{ source: 'instagram' | 'facebook' | 'whatsapp' | 'direct' | 'other'; visits: number; percentage: number }>
+  devices: Array<{ device: 'mobile' | 'tablet' | 'desktop' | 'unknown'; visits: number; percentage: number }>
+  timeline: Array<{ bucket: string; uniqueVisits: number; unitsAdded: number; whatsappIntents: number }>
+  realOrders: { pending: number; confirmed: number; discarded: number; cancelled: number; confirmedStockRevenueCents: number }
+}
+
+function analyticsQuery(range?: AdminAnalyticsRange): string {
+  const params = new URLSearchParams()
+  if (range?.from) params.set('from', range.from)
+  if (range?.to) params.set('to', range.to)
+  const query = params.toString()
+  return query ? `?${query}` : ''
+}
+
+export function fetchAdminAnalyticsSummary(range?: AdminAnalyticsRange, signal?: AbortSignal): Promise<AdminAnalyticsSummaryV2> {
+  return requestJson<AdminAnalyticsSummaryV2>(`/api/admin/analytics/summary${analyticsQuery(range)}`, { signal })
+}
+
+export function fetchAdminProductAnalytics(range?: AdminAnalyticsRange, signal?: AbortSignal): Promise<{ products: AdminAnalyticsProductInterest[] }> {
+  return requestJson<{ products: AdminAnalyticsProductInterest[] }>(`/api/admin/analytics/products${analyticsQuery(range)}`, { signal })
 }
 
 export function fetchAdminOrders(signal?: AbortSignal): Promise<OrderSummary[]> {

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ChangeEvent } from 'react'
-import { ApiClientError, approveAdminImage, fetchAdminImages, retryAdminImage, type AdminImageRecord } from '../../api/admin'
+import { ApiClientError, fetchAdminImages, reorderAdminImages, type AdminImageRecord } from '../../api/admin'
 
 export type ImageUploadState = 'idle' | 'uploading' | 'ready' | 'failed'
 
@@ -9,26 +9,29 @@ type ImageProcessorProps = {
   onChanged?: () => Promise<void> | void
 }
 
-function statusCopy(record: AdminImageRecord | undefined): string {
-  if (!record) return 'JPG, PNG o WEBP · máximo 15 MB'
-  if (record.processingStatus === 'READY') return 'Procesamiento listo. Revisa y aprueba el resultado.'
-  if (record.processingStatus === 'FAILED') return 'No se pudo procesar. El original se conserva para reintentar o aprobarlo.'
-  return 'Guardando original y procesando…'
+const IMAGE_HELP = 'Recomendado: 1200 × 1200 px · JPG, PNG o WEBP · máximo 15 MB'
+
+function sortImages(images: AdminImageRecord[]): AdminImageRecord[] {
+  return [...images].sort((a, b) => a.sortOrder - b.sortOrder || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+}
+
+function imageStatusCopy(record: AdminImageRecord): string {
+  if (record.processingStatus === 'FAILED') return 'Imagen guardada; revisa este archivo.'
+  if (record.processingStatus === 'PROCESSING' || record.processingStatus === 'PENDING') return 'Imagen anterior en proceso.'
+  return 'Imagen original lista para mostrar.'
 }
 
 export function ImageProcessor({ productId, onUpload, onChanged }: ImageProcessorProps) {
   const [status, setStatus] = useState<ImageUploadState>('idle')
-  const [message, setMessage] = useState('JPG, PNG o WEBP · máximo 15 MB')
+  const [message, setMessage] = useState('Las imágenes se guardan tal como las subes.')
   const [images, setImages] = useState<AdminImageRecord[]>([])
-  const [busyAction, setBusyAction] = useState<'retry' | 'original' | 'processed' | null>(null)
+  const [busyImageId, setBusyImageId] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
-    fetchAdminImages(productId).then((loaded) => { if (active) { setImages(loaded); setMessage(statusCopy(loaded.at(-1))) } }).catch(() => undefined)
+    fetchAdminImages(productId).then((loaded) => { if (active) setImages(sortImages(loaded)) }).catch(() => undefined)
     return () => { active = false }
   }, [productId])
-
-  const latest = images.at(-1)
 
   async function handleChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -36,41 +39,58 @@ export function ImageProcessor({ productId, onUpload, onChanged }: ImageProcesso
     if (!file) return
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { setStatus('failed'); setMessage('Formato no válido. Usa JPG, PNG o WEBP.'); return }
     if (file.size > 15 * 1024 * 1024) { setStatus('failed'); setMessage('La imagen supera el límite de 15 MB.'); return }
-    setStatus('uploading'); setMessage('Guardando original y procesando…')
+    setStatus('uploading'); setMessage('Guardando imagen original…')
     try {
       const uploaded = await onUpload?.(file)
-      if (uploaded) setImages((current) => [...current.filter((image) => image.id !== uploaded.id), uploaded])
-      const result = uploaded ?? latest
-      setStatus(result?.processingStatus === 'FAILED' ? 'failed' : 'ready'); setMessage(statusCopy(result))
+      if (uploaded) setImages((current) => sortImages([...current.filter((image) => image.id !== uploaded.id), uploaded]))
+      setStatus('ready'); setMessage('Imagen guardada sin alterar. Puedes cambiar su posición abajo.')
       await onChanged?.()
     } catch (error) {
-      setStatus('failed'); setMessage(error instanceof ApiClientError ? `${error.message} (${error.code})` : error instanceof Error ? error.message : 'No se pudo procesar. El original se conserva para reintentar o aprobarlo.')
+      setStatus('failed'); setMessage(error instanceof ApiClientError ? `${error.message} (${error.code})` : error instanceof Error ? error.message : 'No se pudo guardar la imagen original.')
     }
   }
 
-  async function retry() {
-    if (!latest || busyAction) return
-    setBusyAction('retry'); setStatus('uploading'); setMessage('Reintentando procesamiento…')
+  async function move(imageId: string, direction: -1 | 1) {
+    if (busyImageId) return
+    const index = images.findIndex((image) => image.id === imageId)
+    const targetIndex = index + direction
+    if (index < 0 || targetIndex < 0 || targetIndex >= images.length) return
+    const ids = images.map((image) => image.id)
+    ;[ids[index], ids[targetIndex]] = [ids[targetIndex], ids[index]]
+    setBusyImageId(imageId)
     try {
-      const updated = await retryAdminImage(productId, latest.id)
-      setImages((current) => current.map((image) => image.id === updated.id ? updated : image))
-      setStatus(updated.processingStatus === 'FAILED' ? 'failed' : 'ready'); setMessage(statusCopy(updated))
+      const updated = await reorderAdminImages(productId, ids)
+      setImages(sortImages(updated)); setMessage('Orden actualizado.')
       await onChanged?.()
-    } catch (error) { setStatus('failed'); setMessage(error instanceof ApiClientError ? `${error.message} (${error.code})` : error instanceof Error ? error.message : 'No se pudo reintentar el procesamiento.') }
-    finally { setBusyAction(null) }
+    } catch (error) {
+      setStatus('failed'); setMessage(error instanceof ApiClientError ? `${error.message} (${error.code})` : error instanceof Error ? error.message : 'No se pudo cambiar el orden.')
+    } finally { setBusyImageId(null) }
   }
 
-  async function approve(variant: 'original' | 'processed') {
-    if (!latest || busyAction) return
-    setBusyAction(variant)
-    try {
-      const updated = await approveAdminImage(productId, latest.id, variant)
-      setImages((current) => current.map((image) => image.id === updated.id ? updated : image))
-      setStatus('ready'); setMessage(variant === 'processed' ? 'Imagen procesada aprobada y visible en el catálogo.' : 'Imagen original aprobada y visible en el catálogo.')
-      await onChanged?.()
-    } catch (error) { setStatus('failed'); setMessage(error instanceof ApiClientError ? `${error.message} (${error.code})` : error instanceof Error ? error.message : 'No se pudo aprobar esta imagen.') }
-    finally { setBusyAction(null) }
-  }
-
-  return <section className={`image-processor image-${status}`} aria-labelledby="image-processor-title"><div><span className="eyebrow">Imagen del producto</span><h2 id="image-processor-title">Fondo limpio, pieza protagonista.</h2><p>{message}</p>{latest && <small>Estado: {latest.processingStatus === 'READY' ? 'procesada' : latest.processingStatus === 'FAILED' ? 'fallida' : 'en proceso'}{latest.approvedVariant ? ` · aprobada (${latest.approvedVariant})` : ''}</small>}</div><div className="image-processor-actions"><label className="button button-secondary"><span>{status === 'uploading' ? 'Procesando…' : 'Subir imagen'}</span><input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleChange} disabled={status === 'uploading' || Boolean(busyAction)} /></label>{latest?.processingStatus === 'FAILED' && <button className="button button-ghost" type="button" onClick={() => void retry()} disabled={Boolean(busyAction)}>Reintentar</button>}{latest && !latest.approvedVariant && <><button className="button button-ghost" type="button" onClick={() => void approve('original')} disabled={Boolean(busyAction)}>Aprobar original</button>{latest.processingStatus === 'READY' && <button className="button button-primary" type="button" onClick={() => void approve('processed')} disabled={Boolean(busyAction)}>Aprobar procesada</button>}</>}</div>{status === 'failed' && <p className="inline-notice is-error" role="alert">El original sigue disponible.</p>}{status === 'ready' && <p className="inline-notice is-success" role="status">Procesamiento listo para revisión.</p>}</section>
+  return <section className={`image-processor image-${status}`} aria-labelledby="image-processor-title">
+    <div>
+      <span className="eyebrow">Galería del producto</span>
+      <h2 id="image-processor-title">Sube tus imágenes tal como son.</h2>
+      <p>{message}</p>
+      <small>{IMAGE_HELP}</small>
+    </div>
+    <div className="image-processor-actions">
+      <label className="button button-secondary">
+        <span>{status === 'uploading' ? 'Guardando…' : 'Subir imagen'}</span>
+        <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleChange} disabled={status === 'uploading' || Boolean(busyImageId)} />
+      </label>
+    </div>
+    {images.length > 0 && <ol className="image-order-list" aria-label="Orden de imágenes del producto">
+      {images.map((image, index) => <li className="image-order-item" key={image.id}>
+        <img className="image-order-preview" src={`/api/admin/products/${encodeURIComponent(productId)}/images/${encodeURIComponent(image.id)}/preview`} alt={`Imagen ${index + 1} del producto`} />
+        <div className="image-order-copy"><strong>Imagen {index + 1}</strong><small>{imageStatusCopy(image)}</small></div>
+        <div className="image-order-actions">
+          <button className="icon-button" type="button" onClick={() => void move(image.id, -1)} disabled={index === 0 || Boolean(busyImageId)} aria-label={`Poner imagen ${index + 1} primero`} title="Subir posición">↑</button>
+          <button className="icon-button" type="button" onClick={() => void move(image.id, 1)} disabled={index === images.length - 1 || Boolean(busyImageId)} aria-label={`Bajar imagen ${index + 1}`} title="Bajar posición">↓</button>
+        </div>
+      </li>)}
+    </ol>}
+    {status === 'failed' && <p className="inline-notice is-error" role="alert">La imagen original existente no se modifica.</p>}
+    {status === 'ready' && <p className="inline-notice is-success" role="status">Cambios de imágenes listos.</p>}
+  </section>
 }

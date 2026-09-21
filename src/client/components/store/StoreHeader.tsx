@@ -4,13 +4,10 @@ import { Icon, icons } from '../ui/Icon'
 import type { Currency } from '../../../shared/types'
 
 export function StoreHeader({ currency, onCurrencyChange, rateAvailable = true, rateLoading = false }: { currency: Currency; onCurrencyChange: (currency: Currency) => void; rateAvailable?: boolean; rateLoading?: boolean }) {
-  const [menuState, setMenuState] = useState<'closed' | 'open' | 'closing'>('closed')
   const [rateNoticeVisible, setRateNoticeVisible] = useState(false)
-  const closeTimer = useRef<number | null>(null)
   const rateNoticeTimer = useRef<number | null>(null)
 
   useEffect(() => () => {
-    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
     if (rateNoticeTimer.current !== null) window.clearTimeout(rateNoticeTimer.current)
   }, [])
 
@@ -35,33 +32,15 @@ export function StoreHeader({ currency, onCurrencyChange, rateAvailable = true, 
     }, 5200)
   }
 
-  function closeMenu() {
-    if (menuState === 'closed') return
-    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
-    setMenuState('closing')
-    closeTimer.current = window.setTimeout(() => {
-      closeTimer.current = null
-      setMenuState('closed')
-    }, 150)
-  }
-
-  function toggleMenu() {
-    if (menuState === 'open') {
-      closeMenu()
-      return
-    }
-    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
-    closeTimer.current = null
-    setMenuState('open')
-  }
-
   return (
     <header className="store-header page-container">
       <Brand />
-      <nav className={`store-nav t-dropdown${menuState === 'open' ? ' is-open' : menuState === 'closing' ? ' is-closing' : ''}`} data-origin="top-right" aria-label="Navegación principal">
-        <a href="/#novedades" onClick={closeMenu}>Novedades</a>
-        <a href="/#anillos" onClick={closeMenu}>Anillos</a>
-        <a href="/#accesorios" onClick={closeMenu}>Accesorios</a>
+      <nav className="store-nav" aria-label="Navegación principal">
+        <a href="/#novedades">Novedades</a>
+        <a href="/#anillos">Anillos</a>
+        <a href="/#accesorios">Accesorios</a>
+        <a href="/guia-de-tallas">Guía de tallas</a>
+        <a href="/privacidad">Privacidad</a>
       </nav>
       <div className="store-header-actions">
         <div className="currency-control">
@@ -77,21 +56,6 @@ export function StoreHeader({ currency, onCurrencyChange, rateAvailable = true, 
             </div>
           )}
         </div>
-        <button
-          className="menu-trigger icon-button"
-          type="button"
-          onClick={toggleMenu}
-          onPointerUp={(event) => {
-            // Pointer activation (especially touch) can leave a stale focus
-            // ring after the menu closes. Keyboard activation still keeps its
-            // focus ring because it does not dispatch a pointer event.
-            event.currentTarget.blur()
-          }}
-          aria-expanded={menuState === 'open'}
-          aria-label={menuState === 'open' ? 'Cerrar menú' : 'Abrir menú'}
-        >
-          <Icon icon={icons.bars} />
-        </button>
       </div>
     </header>
   )

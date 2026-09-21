@@ -1,15 +1,18 @@
 import { sendAnalytics } from '../api/public'
-import { getSessionId, getSource } from '../../shared/storage'
+import { getSessionId, getSource, getVisitorId } from '../../shared/storage'
 import type { AnalyticsEvent } from '../../shared/types'
 
 type AnalyticsProperty = string | number | boolean
 
 const MAX_BATCH = 20
-const forbidden = new Set(['name', 'phone', 'email', 'address', 'message', 'customertext', 'customer_text'])
+const forbidden = new Set(['name', 'phone', 'email', 'address', 'message', 'customertext', 'customer_text', 'coordinates', 'latitude', 'longitude', 'paymentnote', 'payment_note', 'ip', 'token'])
 
 function safeProperties(properties?: Record<string, unknown>): Record<string, AnalyticsProperty> | undefined {
   if (!properties) return undefined
-  const entries = Object.entries(properties).filter(([key, value]) => !forbidden.has(key.toLowerCase()) && (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'))
+  const entries = Object.entries(properties).filter(([key, value]) => {
+    const lowerKey = key.toLowerCase()
+    return !forbidden.has(lowerKey) && !/customer|phone|email|address|coordinate|payment|rawip|device.?token/.test(lowerKey) && (typeof value === 'string' || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value)))
+  })
   if (!entries.length) return undefined
   return Object.fromEntries(entries.slice(0, 20).map(([key, value]) => [key.slice(0, 40), typeof value === 'string' ? value.slice(0, 120) : value])) as Record<string, AnalyticsProperty>
 }
@@ -23,7 +26,7 @@ class AnalyticsClient {
   }
 
   track(name: AnalyticsEvent['name'], properties?: Record<string, unknown>): void {
-    const cleanedProperties = safeProperties({ ...properties, device: deviceClass() })
+    const cleanedProperties = safeProperties({ ...properties, device: deviceClass(), visitorId: getVisitorId() })
     this.queue.push({ name, sessionId: getSessionId(), source: getSource(), occurredAt: new Date().toISOString(), ...(cleanedProperties ? { properties: cleanedProperties } : {}) })
     if (this.queue.length >= MAX_BATCH) void this.flush()
     else if (typeof window !== 'undefined' && this.flushTimer === undefined) this.flushTimer = window.setTimeout(() => { this.flushTimer = undefined; void this.flush() }, 1_000)

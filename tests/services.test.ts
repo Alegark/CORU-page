@@ -6,7 +6,7 @@ import { resetState, state } from '../src/worker/state'
 import type { Order } from '../src/shared/types'
 import { scheduled } from '../src/worker/scheduled'
 import { confirmOrder, createPendingOrder, refreshOrderRate } from '../src/worker/services/order.service'
-import { recordAnalytics, summarizeTraffic } from '../src/worker/services/analytics.service'
+import { recordAnalytics, summarizeAnalyticsV2, summarizeProductInterest, summarizeTraffic, resolveAnalyticsDateRange } from '../src/worker/services/analytics.service'
 import type { AnalyticsEvent } from '../src/shared/types'
 
 describe('inventory service', () => {
@@ -110,17 +110,65 @@ describe('order stock and rate races', () => {
 describe('anonymous traffic analytics', () => {
   beforeEach(() => resetState())
 
-  it('counts catalog visits and distinct sessions without retaining visitor identity', () => {
+  it('counts one catalog visit per anonymous visitor in the selected range', () => {
     const events: AnalyticsEvent[] = [
-      { name: 'catalog_view', sessionId: 'session-a', source: 'directo', occurredAt: '2026-09-18T10:00:00.000Z' },
-      { name: 'catalog_view', sessionId: 'session-a', source: 'directo', occurredAt: '2026-09-18T10:02:00.000Z' },
-      { name: 'catalog_view', sessionId: 'session-b', source: 'instagram', occurredAt: '2026-09-18T11:00:00.000Z' },
-      { name: 'product_view', sessionId: 'session-b', source: 'instagram', occurredAt: '2026-09-18T11:01:00.000Z' },
+      { name: 'catalog_view', sessionId: 'session-a', source: 'directo', occurredAt: '2026-09-18T10:00:00.000Z', properties: { visitorId: 'visitor-mobile', device: 'mobile' } },
+      { name: 'catalog_view', sessionId: 'session-a-new-tab', source: 'directo', occurredAt: '2026-09-18T10:02:00.000Z', properties: { visitorId: 'visitor-mobile', device: 'mobile' } },
+      { name: 'catalog_view', sessionId: 'session-a-next-day', source: 'directo', occurredAt: '2026-09-19T10:00:00.000Z', properties: { visitorId: 'visitor-mobile', device: 'mobile' } },
+      { name: 'catalog_view', sessionId: 'session-b', source: 'instagram', occurredAt: '2026-09-18T11:00:00.000Z', properties: { visitorId: 'visitor-desktop', device: 'desktop' } },
+      { name: 'catalog_view', sessionId: 'legacy-session', source: 'directo', occurredAt: '2026-09-18T12:00:00.000Z', properties: { device: 'mobile' } },
+      { name: 'product_view', sessionId: 'session-b', source: 'instagram', occurredAt: '2026-09-18T11:01:00.000Z', properties: { visitorId: 'visitor-desktop', device: 'desktop' } },
     ]
     recordAnalytics(state, events)
 
-    expect(summarizeTraffic(state)).toEqual({ visits: 3, sessions: 2, pagesPerSession: 1.5 })
+    expect(summarizeTraffic(state)).toEqual({ visits: 2, sessions: 2, pagesPerSession: 1 })
     expect(summarizeTraffic(state, { fromMs: Date.parse('2026-09-18T10:01:00.000Z'), toMs: Date.parse('2026-09-18T10:59:59.999Z') })).toEqual({ visits: 1, sessions: 1, pagesPerSession: 1 })
+  })
+
+  it('builds the V2 summary from unique catalog visits and keeps product views out of the global visit count', () => {
+    const from = Date.parse('2026-09-20T04:00:00.000Z')
+    const to = Date.parse('2026-09-20T23:59:59.999Z')
+    state.analytics.push(
+      { name: 'catalog_view', sessionId: 'session-a', source: 'src=ig', occurredAt: '2026-09-20T05:00:00.000Z', properties: { visitorId: 'visitor-mobile', device: 'mobile' } },
+      { name: 'catalog_view', sessionId: 'session-a-new-tab', source: 'instagram', occurredAt: '2026-09-20T05:01:00.000Z', properties: { visitorId: 'visitor-mobile', device: 'mobile' } },
+      { name: 'product_view', sessionId: 'session-a', source: 'instagram', occurredAt: '2026-09-20T05:01:30.000Z', properties: { visitorId: 'visitor-mobile', productId: 'orbita-oscura', productName: 'Órbita oscura', category: 'Anillos', unitPriceCents: 1000, promoEligible: true, fulfillment_type: 'STOCK', device: 'mobile' } },
+      { name: 'cart_add', sessionId: 'session-a', source: 'instagram', occurredAt: '2026-09-20T05:02:00.000Z', properties: { visitorId: 'visitor-mobile', productId: 'orbita-oscura', productName: 'Órbita oscura', category: 'Anillos', unitPriceCents: 1000, quantityDelta: 2, promoEligible: true, fulfillment_type: 'STOCK', device: 'mobile' } },
+      { name: 'order_intent', sessionId: 'session-a', source: 'instagram', occurredAt: '2026-09-20T05:03:00.000Z', properties: { visitorId: 'visitor-mobile', device: 'mobile' } },
+      { name: 'catalog_view', sessionId: 'session-b', source: 'facebook', occurredAt: '2026-09-20T06:00:00.000Z', properties: { visitorId: 'visitor-desktop', device: 'desktop' } },
+      { name: 'product_view', sessionId: 'session-b', source: 'facebook', occurredAt: '2026-09-20T06:00:30.000Z', properties: { visitorId: 'visitor-desktop', productId: 'coru-dark', productName: 'CORU DARK', category: 'Anillos', unitPriceCents: 700, promoEligible: false, fulfillment_type: 'STOCK', device: 'desktop' } },
+      { name: 'size_guide_view', sessionId: 'session-b', source: 'facebook', occurredAt: '2026-09-20T06:01:00.000Z', properties: { visitorId: 'visitor-desktop', device: 'desktop' } },
+    )
+
+    const summary = summarizeAnalyticsV2(state, state.orders, { fromMs: from, toMs: to, from: '2026-09-20', to: '2026-09-20', timezone: 'America/Caracas' })
+    expect(summary.kpis).toMatchObject({ uniqueVisits: 2, totalVisits: 3, unitsAdded: 2, whatsappIntents: 1 })
+    expect(summary.commercial).toMatchObject({ unitsAdded: 2, potentialValueCents: 2000, potentialValueEstimated: false, whatsappPerAddPct: 100 })
+    expect(summary.funnel).toMatchObject({ catalogSessions: 2, productViewSessions: 2, addSessions: 1, whatsappSessions: 1, confirmedOrders: 0 })
+    expect(summary.sources).toEqual(expect.arrayContaining([{ source: 'instagram', visits: 1, percentage: 50 }, { source: 'facebook', visits: 1, percentage: 50 }]))
+    expect(summary.devices).toEqual(expect.arrayContaining([{ device: 'mobile', visits: 1, percentage: 50 }, { device: 'desktop', visits: 1, percentage: 50 }]))
+    expect(summary.timeline.reduce((sum, bucket) => sum + bucket.uniqueVisits, 0)).toBe(2)
+  })
+
+  it('ranks products by views plus weighted units and marks estimated historical values', () => {
+    state.analytics.push(
+      ...Array.from({ length: 3 }, (_, index) => ({ name: 'product_view' as const, sessionId: `view-a-${index}`, source: 'directo', occurredAt: '2026-09-20T05:00:00.000Z', properties: { productId: 'orbita-oscura', productName: 'Órbita oscura' } })),
+      { name: 'cart_add', sessionId: 'add-a', source: 'directo', occurredAt: '2026-09-20T05:10:00.000Z', properties: { productId: 'orbita-oscura', quantityDelta: 2 } },
+      ...Array.from({ length: 6 }, (_, index) => ({ name: 'product_view' as const, sessionId: `view-b-${index}`, source: 'directo', occurredAt: '2026-09-20T05:00:00.000Z', properties: { productId: 'coru-dark', productName: 'CORU DARK' } })),
+    )
+    const rows = summarizeProductInterest(state, { fromMs: Date.parse('2026-09-20T04:00:00.000Z'), toMs: Date.parse('2026-09-20T23:59:59.999Z') })
+    expect(rows[0]).toMatchObject({ productId: 'orbita-oscura', views: 3, unitsAdded: 2, addSessions: 1, interestScore: 9, relativeInterestPct: 100 })
+    expect(rows[1]).toMatchObject({ productId: 'coru-dark', views: 6, unitsAdded: 0, interestScore: 6 })
+  })
+
+  it('resolves date-only ranges at America/Caracas boundaries and max 180 days', () => {
+    const today = new Date('2026-09-20T12:00:00.000Z')
+    const range = resolveAnalyticsDateRange('2026-09-20', '2026-09-20', today)
+    expect(range.ok).toBe(true)
+    if (range.ok) {
+      expect(range.value.fromMs).toBe(Date.parse('2026-09-20T04:00:00.000Z'))
+      expect(range.value.toMs).toBe(Date.parse('2026-09-20T12:00:00.000Z'))
+    }
+    expect(resolveAnalyticsDateRange('2026-09-20', '2026-09-19', today).ok).toBe(false)
+    expect(resolveAnalyticsDateRange('2026-03-01', '2026-09-20', today).ok).toBe(false)
   })
 })
 

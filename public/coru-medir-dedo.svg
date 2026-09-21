@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <style>
+      .outline { stroke:#000000; stroke-width:18; stroke-linecap:round; stroke-linejoin:round; }
+      .thin { stroke:#000000; stroke-width:12; stroke-linecap:round; stroke-linejoin:round; }
+      .mint { stroke:#39F79B; fill:#39F79B; }
+      .white { fill:#FFFFFF; }
+      .lightmint { fill:#E8FFF0; }
+    </style>
+  </defs>
+
+  <!-- FINGER -->
+  <g id="finger">
+    <!-- simplified finger/body -->
+    <path class="white outline"
+      d="M214 798
+         C170 737 156 663 169 579
+         L196 313
+         C201 260 230 226 270 226
+         C312 226 337 258 337 311
+         L337 528
+         C355 516 376 513 397 520
+         C428 530 449 559 451 594
+         L457 703
+         C459 744 446 782 420 812
+         C393 843 358 861 315 865
+         C274 869 239 846 214 798 Z"/>
+
+    <!-- fingernail -->
+    <path class="white thin"
+      d="M235 277
+         C243 255 258 244 278 244
+         C298 244 313 255 320 277
+         L320 331
+         C320 359 303 375 278 375
+         C252 375 235 359 235 331 Z"/>
+
+    <!-- crease lines -->
+    <path class="thin" d="M232 466 C255 451 286 451 310 466"/>
+    <path class="thin" d="M231 497 C256 484 286 484 309 497"/>
+    <path class="thin" d="M224 644 C248 632 280 632 305 644"/>
+
+    <!-- wrap strip around finger -->
+    <path d="M187 547
+             C225 561 277 565 337 557
+             L337 635
+             C279 643 225 640 185 627
+             Z"
+          fill="#39F79B" class="outline"/>
+
+    <!-- strip tab -->
+    <path d="M337 566 L420 586 L420 657 L337 635 Z"
+          fill="#39F79B" class="outline"/>
+
+    <!-- overlap / mark -->
+    <path d="M341 572 L341 632" class="thin" stroke-dasharray="14 14"/>
+
+    <!-- emphasis rays -->
+    <path d="M394 527 L415 497" stroke="#39F79B" stroke-width="16" stroke-linecap="round"/>
+    <path d="M418 544 L451 526" stroke="#39F79B" stroke-width="16" stroke-linecap="round"/>
+    <path d="M430 571 L465 566" stroke="#39F79B" stroke-width="16" stroke-linecap="round"/>
+  </g>
+
+  <!-- TRANSITION ARROW -->
+  <g id="transition">
+    <path d="M486 590 H574" stroke="#000000" stroke-width="16" stroke-linecap="round"/>
+    <path d="M550 565 L579 590 L550 615" fill="none" class="outline"/>
+  </g>
+
+  <!-- STRIP + RULER -->
+  <g id="measurement">
+    <!-- flat strip -->
+    <path d="M612 486
+             C648 481 785 481 872 487
+             L889 542
+             C797 550 665 550 612 543 Z"
+          fill="#39F79B" class="outline"/>
+
+    <!-- start/end guide bars -->
+    <path d="M620 455 V565" stroke="#39F79B" stroke-width="14" stroke-linecap="round" stroke-dasharray="12 16"/>
+    <path d="M872 455 V565" stroke="#39F79B" stroke-width="14" stroke-linecap="round" stroke-dasharray="12 16"/>
+
+    <!-- mark on strip -->
+    <path d="M858 493 L858 540" class="thin"/>
+
+    <!-- measurement arrow -->
+    <path d="M648 448 H844" stroke="#39F79B" stroke-width="16" stroke-linecap="round"/>
+    <path d="M648 448 L678 424" stroke="#39F79B" stroke-width="16" stroke-linecap="round"/>
+    <path d="M648 448 L678 472" stroke="#39F79B" stroke-width="16" stroke-linecap="round"/>
+    <path d="M844 448 L814 424" stroke="#39F79B" stroke-width="16" stroke-linecap="round"/>
+    <path d="M844 448 L814 472" stroke="#39F79B" stroke-width="16" stroke-linecap="round"/>
+
+    <!-- ruler -->
+    <rect x="606" y="582" width="306" height="132" rx="22" class="white outline"/>
+
+    <!-- ruler ticks -->
+    <path d="
+      M632 584 V632
+      M660 584 V618
+      M688 584 V632
+      M716 584 V618
+      M744 584 V642
+      M772 584 V618
+      M800 584 V632
+      M828 584 V618
+      M856 584 V632
+      M884 584 V618
+      " class="thin"/>
+
+    <!-- small ruler hole -->
+    <circle cx="638" cy="670" r="16" class="white thin"/>
+  </g>
+</svg>

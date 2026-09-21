@@ -19,6 +19,7 @@ export type CoruBindings = {
   YUMMY_API_TOKEN?: string
   CORU_MEDIA?: unknown
   CORU_ABUSE_SECRET?: string
+  ANALYTICS_PURGE_BEFORE?: string
 }
 
 export type CoruEnv = {

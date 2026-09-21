@@ -29,9 +29,13 @@ export function StorePage({ products, categories = fallbackCategories, promotion
     const availableCategoryNames = new Set(publicProducts.map((product) => product.category))
     return categories
       .filter((entry) => entry.active && availableCategoryNames.has(entry.name))
-      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
   }, [categories, publicProducts])
-  const filtered = useMemo(() => publicProducts.filter((product) => (category === 'Todos' || product.category === category) && product.name.toLocaleLowerCase().includes(search.toLocaleLowerCase().trim())), [category, publicProducts, search])
+  const categoryFilters = useMemo(() => ['Todos', ...visibleCategories.map((entry) => entry.name)], [visibleCategories])
+  const filtered = useMemo(() => publicProducts.filter((product) => {
+    const matchesCategory = category === 'Todos' || product.category === category
+    return matchesCategory && product.name.toLocaleLowerCase().includes(search.toLocaleLowerCase().trim())
+  }), [category, publicProducts, search])
   const eligibleCount = useMemo(() => lines.reduce((sum, line) => {
     const product = products.find((item) => item.id === line.productId)
     const eligible = product?.promoEligible && (promotion === undefined || !promotion?.targetCategory || product.category === promotion.targetCategory)
@@ -50,8 +54,8 @@ export function StorePage({ products, categories = fallbackCategories, promotion
   }, [])
 
   useEffect(() => {
-    if (category !== 'Todos' && !visibleCategories.some((entry) => entry.name === category)) setCategory('Todos')
-  }, [category, visibleCategories])
+    if (category !== 'Todos' && !categoryFilters.includes(category)) setCategory('Todos')
+  }, [category, categoryFilters])
 
   useLayoutEffect(() => {
     const row = filterRowRef.current
@@ -85,11 +89,10 @@ export function StorePage({ products, categories = fallbackCategories, promotion
     }
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
-  }, [category, visibleCategories])
+  }, [category, categoryFilters])
 
   function addProduct(product: Product) {
     add(product)
-    analytics.track('cart_add', { productId: product.id, promoEligible: product.promoEligible })
   }
 
   return (
@@ -99,27 +102,23 @@ export function StorePage({ products, categories = fallbackCategories, promotion
         <div className="page-container store-main">
           <section className="store-intro" id="novedades">
             <div className={`store-intro-copy t-stagger${introShown ? ' is-shown' : ''}`}>
-              <span className="eyebrow t-stagger-line t-stagger-line--1">CORU · piezas con actitud</span>
-              <h1 className="display-heading t-stagger-line t-stagger-line--2">Elige una pieza.<br /><span>Hazla tuya.</span></h1>
-              <p className="t-stagger-line t-stagger-line--3">Anillos y accesorios para combinar sin pedir permiso.</p>
+              <h1 className="display-heading t-stagger-line t-stagger-line--1">Arma tu <span>combo</span></h1>
+              <p className="t-stagger-line t-stagger-line--2">Anillos y accesorios para combinar</p>
             </div>
-            <div className="intro-stamp" aria-hidden="true"><span>DROP</span><strong>09</strong><small>2026</small></div>
           </section>
           <PromoBanner progress={eligibleCount} promotion={promotion} currency={currency} rateMicros={rateMicros} onAction={() => { document.getElementById('anillos')?.scrollIntoView({ behavior: 'smooth' }) }} />
-          <section className="catalog-section" id="anillos" aria-labelledby="catalog-title">
+          <section className="catalog-section" id="anillos" aria-label="Catálogo de piezas">
             <div className="catalog-toolbar">
               <div className="search-field"><Icon icon={icons.search} /><label className="sr-only" htmlFor="product-search">Buscar piezas</label><input id="product-search" className="input" type="search" placeholder="Buscar anillos o accesorios…" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
               <div ref={filterRowRef} className="filter-row t-tabs" role="group" aria-label="Filtrar por categoría">
                 <span className="t-tabs-pill" aria-hidden="true" />
-                {['Todos', ...visibleCategories.map((entry) => entry.name)].map((item) => <button key={item} type="button" className={`filter-chip t-tab${category === item ? ' is-selected' : ''}`} aria-pressed={category === item} onClick={() => setCategory(item)}>{item}</button>)}
+                {categoryFilters.map((item) => <button key={item} type="button" className={`filter-chip t-tab${category === item ? ' is-selected' : ''}`} aria-pressed={category === item} onClick={() => setCategory(item)}>{item}</button>)}
               </div>
             </div>
-            <div className="catalog-heading"><div><span className="eyebrow">Colección actual</span><h2 id="catalog-title">Piezas que hablan por ti</h2></div><span className="catalog-count">{filtered.length} disponibles</span></div>
             {catalogLoading ? <div className="empty-state surface-card catalog-state" role="status" aria-live="polite" aria-busy="true"><div className="empty-icon" aria-hidden="true"><span className="catalog-spinner" /></div><h3>Cargando colección</h3><p>Estamos preparando las piezas disponibles.</p></div> : catalogError ? <div className="empty-state surface-card catalog-state" role="alert"><div className="empty-icon" aria-hidden="true">!</div><h3>No pudimos cargar la colección</h3><p>{catalogError}</p>{onRetry && <button className="button button-primary" type="button" onClick={onRetry}>Reintentar</button>}</div> : !publicProducts.length ? <div className="empty-state surface-card catalog-state"><div className="empty-icon"><Icon icon={icons.box} /></div><h3>La colección se está preparando</h3><p>Pronto habrá piezas disponibles. Vuelve a visitarnos.</p></div> : filtered.length === 0 ? <div className="empty-state surface-card"><div className="empty-icon"><Icon icon={icons.search} /></div><h3>No encontramos esa pieza</h3><p>Prueba otra búsqueda o vuelve a ver toda la colección.</p><button className="button button-secondary" type="button" onClick={() => { setSearch(''); setCategory('Todos') }}>Ver todo</button></div> : <div className="product-grid">{filtered.map((product) => <ProductCard key={product.id} product={product} promotion={promotion} currency={currency} rateMicros={rateMicros} onAdd={() => addProduct(product)} />)}</div>}
           </section>
           <section className="about-strip" id="accesorios">
             <div className="about-strip-intro"><span className="eyebrow">Hecho para rotar</span><h2>Una colección chica.<br />Muchas formas de usarla.</h2></div>
-            <p>Compra solo lo que te representa. Repite lo que te funciona.</p>
             <div className="about-links" aria-label="Información útil">
               <button className="about-link about-link-featured" type="button" onClick={() => navigate('/guia-de-tallas')}>
                 <span className="about-link-copy"><span className="about-link-label">Antes de pedir</span><strong>Guía de tallas</strong><small>Aprende a medir tu talla.</small></span>

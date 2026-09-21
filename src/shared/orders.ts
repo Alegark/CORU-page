@@ -1,6 +1,7 @@
 import { convertUsdCentsToBs, quoteCart } from './commerce'
-import type { CartLine, Currency, Order, Product } from './types'
+import type { CartLine, Currency, Order, Product, ShippingSelection } from './types'
 import { getSessionId, loadOrders, saveOrders } from './storage'
+import { formatWhatsappOrderMessage } from './whatsapp'
 
 const DEFAULT_WHATSAPP = '584120000000'
 
@@ -24,7 +25,7 @@ function randomOrderId(): string {
   return `order-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
-export function createOrderIntent(lines: CartLine[], currency: Currency, rateMicros: number | undefined, products: Product[], idempotencyKey = getSessionId()): CreateOrderResult {
+export function createOrderIntent(lines: CartLine[], currency: Currency, rateMicros: number | undefined, products: Product[], idempotencyKey = getSessionId(), shipping?: ShippingSelection | null): CreateOrderResult {
   const cached = intents.get(idempotencyKey)
   if (cached) return { order: cached, reused: true }
 
@@ -62,6 +63,7 @@ export function createOrderIntent(lines: CartLine[], currency: Currency, rateMic
     whatsappUrl: '',
     expiresAt: new Date(now.getTime() + 72 * 60 * 60 * 1000).toISOString(),
     fulfillmentTypeSnapshot: available.get(cleanLines[0].productId)?.fulfillmentType ?? 'STOCK',
+    ...(shipping && (available.get(cleanLines[0].productId)?.fulfillmentType ?? 'STOCK') === 'STOCK' ? { shipping } : {}),
   }
   if (order.fulfillmentTypeSnapshot === 'PREORDER') {
     order.leadTimeSnapshot = available.get(cleanLines[0].productId)?.leadTime ?? '3–4 semanas'
@@ -71,11 +73,7 @@ export function createOrderIntent(lines: CartLine[], currency: Currency, rateMic
     order.paymentStatus = 'UNPAID'
   }
   const bsTotal = currency === 'Bs' && rateMicros ? convertUsdCentsToBs(quote.totalCents, rateMicros) : undefined
-  const linesText = orderItems.map((item) => `${item.quantity}× ${item.name}`).join('\n')
-  const validity = order.rateValidUntil ? 'Tasa asegurada para tu pedido hasta finalizar hoy.' : ''
-  const promotionLine = quote.appliedPromotion ? `Promo: ${quote.appliedPromotion.name} (${quote.appliedPromotion.groupsApplied} combo${quote.appliedPromotion.groupsApplied > 1 ? 's' : ''})` : ''
-  const text = [`Hola, quiero pedir estos productos de CORU.`, `Referencia: ${reference}`, linesText, promotionLine, `Total USD: $${(quote.totalCents / 100).toFixed(2)}`, bsTotal ? `Total Bs: Bs ${(bsTotal / 100).toLocaleString('es-VE', { minimumFractionDigits: 2 })}` : '', validity].filter(Boolean).join('\n')
-  order.whatsappUrl = `https://wa.me/${DEFAULT_WHATSAPP}?text=${encodeURIComponent(text)}`
+  order.whatsappUrl = `https://wa.me/${DEFAULT_WHATSAPP}?text=${encodeURIComponent(formatWhatsappOrderMessage(order, { totalBs: bsTotal }))}`
   intents.set(idempotencyKey, order)
   saveOrders([...orders, order])
   return { order, reused: false }

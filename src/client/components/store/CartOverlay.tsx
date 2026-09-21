@@ -1,15 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { Icon, icons } from '../ui/Icon'
 import { formatCurrencyAmount, formatUsd, quoteCart } from '../../../shared/commerce'
 import { createOrderIntent } from '../../../shared/orders'
-import type { Order, Product, ShippingSelection, PersonalDeliveryPoint } from '../../../shared/types'
-import type { YummyQuoteResponse } from '../../../shared/contracts'
+import type { Order, Product, ShippingMethod, ShippingSelection, PersonalDeliveryPoint } from '../../../shared/types'
 import { useCart } from '../../features/cart/CartContext'
 import { RingArtwork } from './RingArtwork'
 import { analytics } from '../../analytics/client'
-import { ApiClientError, fetchPersonalDeliveryPoints, requestYummyQuote } from '../../api/public'
+import { ApiClientError, fetchPersonalDeliveryPoints } from '../../api/public'
 import { createOrderIntentRemote } from '../../features/orders/orderIntent'
-import { PersonalDeliveryPointMap } from './PersonalDeliveryPointMap'
+import { ShippingPanel } from './ShippingPanel'
+import { defaultPersonalDeliveryPoints } from '../../../shared/delivery-points'
 
 function isVitePreview(): boolean {
   const hostname = window.location.hostname
@@ -33,16 +33,17 @@ export function CartOverlay({ products, open, onClose, onOrderCreated, rateMicro
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
   const [deliveryPoints, setDeliveryPoints] = useState<PersonalDeliveryPoint[]>([])
-  const [shippingMethod, setShippingMethod] = useState<ShippingMethod>('PERSONAL')
+  const [shippingMethod, setShippingMethod] = useState<ShippingMethod | null>(null)
+  const [expandedShippingMethod, setExpandedShippingMethod] = useState<Exclude<ShippingMethod, 'YUMMY'> | null>(null)
   const [deliveryPointId, setDeliveryPointId] = useState('coru-punto-central')
-  const [national, setNational] = useState<{ carrier: 'MRW' | 'ZOOM'; state: string; city: string; officeText: string }>({ carrier: 'MRW', state: '', city: '', officeText: '' })
-  const [yummyAddress, setYummyAddress] = useState('')
-  const [yummyQuote, setYummyQuote] = useState<YummyQuoteResponse | null>(null)
-  const [yummyQuoteLoading, setYummyQuoteLoading] = useState(false)
-  const yummyQuoteVersion = useRef(0)
+  const [nationalCarrier, setNationalCarrier] = useState<'MRW' | 'ZOOM'>('MRW')
+  const [dragOffset, setDragOffset] = useState(0)
+  const [dragging, setDragging] = useState(false)
   const closeButton = useRef<HTMLButtonElement>(null)
   const previouslyFocused = useRef<HTMLElement | null>(null)
   const closeTimer = useRef<number | null>(null)
+  const dragStartY = useRef<number | null>(null)
+  const dragPointerId = useRef<number | null>(null)
   const productById = useMemo(() => new Map(products.map((product) => [product.id, product])), [products])
   const visibleLines = lines.map((line) => ({ ...line, product: productById.get(line.productId) })).filter((line): line is typeof line & { product: Product } => Boolean(line.product))
   const stockLines = lines.filter((line) => (productById.get(line.productId)?.fulfillmentType ?? 'STOCK') === 'STOCK')
@@ -50,7 +51,7 @@ export function CartOverlay({ products, open, onClose, onOrderCreated, rateMicro
   const hasStock = stockLines.length > 0
   const hasPreorder = preorderLines.length > 0
   const showPreorderNote = hasPreorder && visibleLines.some(({ product }) => (product.fulfillmentType ?? 'STOCK') === 'PREORDER')
-  const personalPoints = deliveryPoints.length ? deliveryPoints : (isVitePreview() ? [{ id: 'coru-punto-central', name: 'Punto CORU · Centro', address: 'Punto coordinado por CORU', active: true, sortOrder: 1 } satisfies PersonalDeliveryPoint] : [])
+  const personalPoints = deliveryPoints.length ? deliveryPoints : (isVitePreview() ? defaultPersonalDeliveryPoints.map((point) => ({ ...point })) : [])
   const quote = quoteCart(lines, products, promotion)
   const usableRate = rateAvailable && rateMicros && rateMicros > 0 ? rateMicros : null
   const displayAmount = (usdCents: number) => formatCurrencyAmount(usdCents, currency, usableRate)
@@ -99,21 +100,32 @@ export function CartOverlay({ products, open, onClose, onOrderCreated, rateMicro
     if (!open || !mounted) return
     previouslyFocused.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
     closeButton.current?.focus()
-    const handleKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
-    document.addEventListener('keydown', handleKey)
     return () => {
-      document.removeEventListener('keydown', handleKey)
       previouslyFocused.current?.focus()
       previouslyFocused.current = null
     }
   }, [open, mounted])
 
   useEffect(() => {
+    if (!open || !mounted) return
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      if (expandedShippingMethod) {
+        setExpandedShippingMethod(null)
+        return
+      }
+      onClose()
+    }
+    document.addEventListener('keydown', handleKey)
+    return () => document.removeEventListener('keydown', handleKey)
+  }, [open, mounted, onClose, expandedShippingMethod])
+
+  useEffect(() => {
     if (!open) {
       setCreateError('')
-      setYummyQuote(null)
-      setYummyQuoteLoading(false)
-      yummyQuoteVersion.current += 1
+      setExpandedShippingMethod(null)
+      setDragOffset(0)
+      setDragging(false)
     }
   }, [open])
 
@@ -125,9 +137,8 @@ export function CartOverlay({ products, open, onClose, onOrderCreated, rateMicro
       await new Promise((resolve) => window.setTimeout(resolve, 220))
       const key = `intent-${Date.now()}-${Math.random()}`
       if (currency === 'Bs' && !usableRate) { setCreateError('La tasa no está disponible. Continúa en USD por ahora.'); return }
+      if (hasStock && !shippingMethod) { setCreateError('Escoge una modalidad de entrega para continuar.'); return }
       if (hasStock && shippingMethod === 'PERSONAL' && !personalPoints.length) { setCreateError('No hay puntos personales activos. Elige Yummy o Nacional, o inténtalo más tarde.'); return }
-      if (hasStock && shippingMethod === 'YUMMY' && yummyAddress.trim().length < 5) { setCreateError('Indica una dirección válida para Yummy.'); return }
-      if (hasStock && shippingMethod === 'NATIONAL' && (!national.state.trim() || !national.city.trim())) { setCreateError('Indica estado y ciudad para el envío nacional.'); return }
       const groups = [ ...(hasStock ? [{ lines: stockLines, shipping: shippingSelection() }] : []), ...(hasPreorder ? [{ lines: preorderLines, shipping: null }] : []) ]
       let lastOrder: Order | null = null
       for (const [index, group] of groups.entries()) {
@@ -139,7 +150,7 @@ export function CartOverlay({ products, open, onClose, onOrderCreated, rateMicro
         } catch (error) {
           const localPreview = isVitePreview() && error instanceof ApiClientError && (error.code === 'NETWORK_ERROR' || error.status === 404 || (error.code === 'HTTP_ERROR' && error.status === 200))
           if (!localPreview) throw error
-          order = createOrderIntent(group.lines, currency, currency === 'Bs' ? usableRate! : undefined, products, groupKey).order
+          order = createOrderIntent(group.lines, currency, currency === 'Bs' ? usableRate! : undefined, products, groupKey, group.shipping).order
         }
         try { window.open(order.whatsappUrl, '_blank', 'noopener,noreferrer') } catch { /* feedback remains available */ }
         lastOrder = order
@@ -166,30 +177,53 @@ export function CartOverlay({ products, open, onClose, onOrderCreated, rateMicro
     }
   }
 
-  type ShippingMethod = 'PERSONAL' | 'YUMMY' | 'NATIONAL'
   function shippingSelection(): ShippingSelection {
-    if (shippingMethod === 'YUMMY') return { method: 'YUMMY', addressText: yummyAddress.trim(), ...(yummyQuote?.status === 'quoted' && yummyQuote.externalId ? { quoteReference: yummyQuote.externalId } : {}) }
-    if (shippingMethod === 'NATIONAL') return { method: 'NATIONAL', carrier: national.carrier, state: national.state.trim(), city: national.city.trim(), ...(national.officeText.trim() ? { officeText: national.officeText.trim() } : {}) }
+    if (!shippingMethod) return { method: 'PERSONAL', deliveryPointId: deliveryPointId || personalPoints[0]?.id || 'coru-punto-central' }
+    if (shippingMethod === 'YUMMY') return { method: 'YUMMY', addressText: 'Por coordinar por WhatsApp' }
+    if (shippingMethod === 'NATIONAL') return { method: 'NATIONAL', carrier: nationalCarrier }
     return { method: 'PERSONAL', deliveryPointId: deliveryPointId || personalPoints[0]?.id || 'coru-punto-central' }
   }
 
-  async function quoteYummy(): Promise<void> {
-    const addressText = yummyAddress.trim()
-    if (addressText.length < 5 || yummyQuoteLoading) return
-    const version = ++yummyQuoteVersion.current
-    setYummyQuoteLoading(true)
-    setYummyQuote(null)
-    analytics.track('yummy_quote_requested', { method: 'YUMMY' })
-    try {
-      const result = await requestYummyQuote({ addressText })
-      if (version !== yummyQuoteVersion.current) return
-      setYummyQuote(result)
-      analytics.track(result.status === 'quoted' ? 'yummy_quote_succeeded' : 'yummy_quote_failed', { method: 'YUMMY' })
-    } catch {
-      if (version !== yummyQuoteVersion.current) return
-      setYummyQuote({ status: 'error', fallbackCopy: 'Costo de delivery a confirmar por WhatsApp.' })
-      analytics.track('yummy_quote_failed', { method: 'YUMMY' })
-    } finally { if (version === yummyQuoteVersion.current) setYummyQuoteLoading(false) }
+  function selectShippingMethod(method: ShippingMethod): void {
+    setCreateError('')
+    setShippingMethod(method)
+    if (method === 'YUMMY') {
+      setExpandedShippingMethod(null)
+      return
+    }
+    setExpandedShippingMethod((current) => current === method ? null : method)
+  }
+
+  function handleWhatsAppClick(): void {
+    if (hasStock && !shippingMethod) {
+      setCreateError('Escoge una modalidad de entrega para continuar.')
+      return
+    }
+    void handleCreateOrder()
+  }
+
+  function handleDragStart(event: ReactPointerEvent<HTMLDivElement>): void {
+    if (event.pointerType === 'mouse') return
+    dragStartY.current = event.clientY
+    dragPointerId.current = event.pointerId
+    setDragging(true)
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  function handleDragMove(event: ReactPointerEvent<HTMLDivElement>): void {
+    if (dragStartY.current === null || dragPointerId.current !== event.pointerId) return
+    const offset = Math.max(0, event.clientY - dragStartY.current)
+    setDragOffset(offset)
+  }
+
+  function handleDragEnd(event: ReactPointerEvent<HTMLDivElement>): void {
+    if (dragPointerId.current !== event.pointerId) return
+    const shouldClose = dragOffset > 96
+    dragStartY.current = null
+    dragPointerId.current = null
+    setDragging(false)
+    setDragOffset(0)
+    if (shouldClose) onClose()
   }
 
   if (!mounted) return null
@@ -197,9 +231,10 @@ export function CartOverlay({ products, open, onClose, onOrderCreated, rateMicro
   return (
     <div className="overlay-root">
       <button className="overlay-scrim" data-open={animationState === 'open'} type="button" onClick={onClose} aria-label="Cerrar carrito" />
-      <aside className="cart-panel t-panel-slide" data-open={animationState === 'open'} role="dialog" aria-modal="true" aria-hidden={animationState !== 'open'} aria-labelledby="cart-title">
+      <aside className={`cart-panel t-panel-slide${dragging ? ' is-dragging' : ''}`} style={{ '--cart-drag-offset': `${dragOffset}px` } as CSSProperties} data-open={animationState === 'open'} role="dialog" aria-modal="true" aria-hidden={animationState === 'closed' && !open} aria-labelledby="cart-title">
+        <div className="cart-panel-drag-handle" aria-hidden="true" onPointerDown={handleDragStart} onPointerMove={handleDragMove} onPointerUp={handleDragEnd} onPointerCancel={handleDragEnd}><span /></div>
         <div className="cart-panel-header">
-          <div><span className="eyebrow">Tu selección</span><h2 id="cart-title">Carrito <span>({itemCount})</span></h2></div>
+          <div><h2 id="cart-title">Carrito</h2></div>
           <div className="cart-panel-actions">
             <button className="icon-button clear-cart-button" type="button" onClick={clear} disabled={visibleLines.length === 0} aria-label="Vaciar carrito" title="Vaciar carrito"><Icon icon={icons.trash} /></button>
             <button ref={closeButton} className="icon-button" type="button" onClick={onClose} aria-label="Cerrar carrito"><Icon icon={icons.xmark} /></button>
@@ -214,17 +249,27 @@ export function CartOverlay({ products, open, onClose, onOrderCreated, rateMicro
                 <div className="cart-line" key={product.id}>
                   <div className="cart-line-art"><RingArtwork artwork={product.artwork} label={product.name} imageUrl={product.imageUrl} /></div>
                   <div className="cart-line-main"><h3>{product.name}</h3><p>{product.sizeLabel} · {displayAmount(product.priceCents)}</p>{(product.fulfillmentType ?? 'STOCK') === 'PREORDER' && <span className="cart-fulfillment-label">Bajo pedido · 3–4 semanas</span>}<div className="quantity-stepper" aria-label={`Cantidad de ${product.name}`}><button type="button" onClick={() => setQuantity(product.id, quantity - 1)} aria-label={`Quitar una unidad de ${product.name}`}><Icon icon={icons.minus} /></button><span>{quantity}</span><button type="button" onClick={() => setQuantity(product.id, (product.fulfillmentType ?? 'STOCK') === 'PREORDER' ? quantity + 1 : Math.min(product.stockQuantity, quantity + 1))} aria-label={`Añadir una unidad de ${product.name}`}><Icon icon={icons.plus} /></button></div></div>
-                  <div className="cart-line-side"><strong>{displayAmount(product.priceCents * quantity)}</strong><button className="text-button" type="button" onClick={() => remove(product.id)}>Quitar</button></div>
+                  <div className="cart-line-side"><strong>{displayAmount(product.priceCents * quantity)}</strong><button className="cart-line-remove" type="button" onClick={() => remove(product.id)} aria-label={`Quitar ${product.name} del carrito`} title="Quitar del carrito"><Icon icon={icons.trash} aria-hidden="true" /></button></div>
                 </div>
               ))}
             </div>
             <div className="cart-footer">
-              {createError && <div className="inline-notice is-error" role="alert">{createError}</div>}
-              {hasStock && <div className="shipping-selector"><strong>Entrega para piezas disponibles</strong><div className="shipping-options" role="group" aria-label="Modalidad de entrega"><button type="button" className={shippingMethod === 'PERSONAL' ? 'is-selected' : ''} onClick={() => { setShippingMethod('PERSONAL'); setYummyQuote(null); setYummyQuoteLoading(false); yummyQuoteVersion.current += 1 }}>Personal</button><button type="button" className={shippingMethod === 'YUMMY' ? 'is-selected' : ''} onClick={() => { setShippingMethod('YUMMY'); setYummyQuoteLoading(false); yummyQuoteVersion.current += 1 }}>Yummy</button><button type="button" className={shippingMethod === 'NATIONAL' ? 'is-selected' : ''} onClick={() => { setShippingMethod('NATIONAL'); setYummyQuote(null); setYummyQuoteLoading(false); yummyQuoteVersion.current += 1 }}>Nacional</button></div>{shippingMethod === 'PERSONAL' && (personalPoints.length ? <PersonalDeliveryPointMap points={personalPoints} selectedId={deliveryPointId} onSelect={(point) => setDeliveryPointId(point.id)} /> : <div className="inline-notice" role="status">No hay puntos personales activos en este momento.</div>)}{shippingMethod === 'YUMMY' && <><input className="input" value={yummyAddress} onChange={(event) => { setYummyAddress(event.target.value); setYummyQuote(null); setYummyQuoteLoading(false); yummyQuoteVersion.current += 1 }} placeholder="Dirección de entrega" aria-label="Dirección de entrega" /><p className="delivery-method-note">El costo se calcula con la tarifa vigente de Yummy al solicitar el delivery. Puede variar según la hora y la disponibilidad; te confirmamos el monto por WhatsApp.</p><div className="yummy-quote-actions"><button className="button button-ghost" type="button" disabled={yummyQuoteLoading || yummyAddress.trim().length < 5} onClick={() => void quoteYummy()}>{yummyQuoteLoading ? 'Consultando…' : 'Consultar costo'}</button>{yummyQuote?.status === 'quoted' && <span className="delivery-quote-notice">Estimado: {yummyQuote.currency} {(yummyQuote.amountMinor / 100).toFixed(2)} · sujeto a cambio</span>}{(yummyQuote?.status === 'unavailable' || yummyQuote?.status === 'error') && <span className="delivery-quote-notice">{yummyQuote.fallbackCopy}</span>}</div></>}{shippingMethod === 'NATIONAL' && <div className="shipping-national-fields"><select className="input" value={national.carrier} onChange={(event) => setNational({ ...national, carrier: event.target.value as 'MRW' | 'ZOOM' })}><option value="MRW">MRW</option><option value="ZOOM">ZOOM</option></select><input className="input" value={national.state} onChange={(event) => setNational({ ...national, state: event.target.value })} placeholder="Estado" aria-label="Estado" /><input className="input" value={national.city} onChange={(event) => setNational({ ...national, city: event.target.value })} placeholder="Ciudad" aria-label="Ciudad" /><input className="input" value={national.officeText} onChange={(event) => setNational({ ...national, officeText: event.target.value })} placeholder="Oficina o agencia (opcional)" aria-label="Oficina o agencia (opcional)" /><small className="delivery-quote-notice">Cobro a destino · cobertura nacional.</small></div>}</div>}
+              {createError && <div className={`inline-notice is-error${hasStock && !shippingMethod ? ' shipping-method-notice' : ''}`} role="alert">{createError}</div>}
+              {hasStock && <div className="shipping-selector"><strong>Entrega para piezas disponibles</strong><div className="shipping-options" role="group" aria-label="Modalidad de entrega">
+                {(['PERSONAL', 'YUMMY', 'NATIONAL'] as const).map((method) => {
+                  const isExpandable = method !== 'YUMMY'
+                  const isExpanded = isExpandable && expandedShippingMethod === method
+                  const label = method === 'PERSONAL' ? 'Personal' : method === 'YUMMY' ? 'Yummy' : 'Envío nacional'
+                  return <button key={method} type="button" className={shippingMethod === method ? 'is-selected' : ''} aria-expanded={isExpandable ? isExpanded : undefined} {...(isExpandable ? { 'aria-controls': 'shipping-panel' } : {})} onClick={() => selectShippingMethod(method)}>{label}</button>
+                })}
+              </div>{shippingMethod === 'NATIONAL' && <span className="shipping-selection-summary">Envío nacional · {nationalCarrier}</span>}
+                {shippingMethod === 'YUMMY' && <p className="delivery-method-note">Para cotizar el envío, envía tu ubicación por WhatsApp.</p>}
+                {shippingMethod && <ShippingPanel key={shippingMethod} open={expandedShippingMethod !== null} method={shippingMethod} points={personalPoints} selectedPointId={deliveryPointId} onSelectPoint={(point) => setDeliveryPointId(point.id)} nationalCarrier={nationalCarrier} onNationalCarrierChange={setNationalCarrier} />}
+              </div>}
               {showPreorderNote && <div className="preorder-cart-note"><strong>Bajo pedido</strong><span>50% al solicitar · 50% al entregar · llega en 3–4 semanas.</span></div>}
               {quote.appliedPromotion && <div className="cart-promo"><Icon icon={icons.bolt} /><span><strong>Promo aplicada</strong><small>{quote.appliedPromotion.name} · {quote.appliedPromotion.groupsApplied} aplicación{quote.appliedPromotion.groupsApplied > 1 ? 'es' : ''}</small></span><strong>−{displayAmount(quote.discountCents)}</strong></div>}
               <div className="totals"><span>Subtotal <strong>{displayAmount(quote.subtotalCents)}</strong></span>{quote.discountCents > 0 && <span>Descuento <strong className="discount">−{displayAmount(quote.discountCents)}</strong></span>}<span className="total-row">Total <strong>{displayAmount(quote.totalCents)}</strong></span>{currency === 'Bs' && usableRate && <span className="bs-total">≈ USD {formatUsd(quote.totalCents)}</span>}</div>
-              <button className="button button-primary whatsapp-cta" type="button" disabled={creating} onClick={handleCreateOrder}><Icon icon={icons.whatsapp} />{creating ? 'Creando pedido…' : 'Pedir por WhatsApp'}</button>
+              <button className={`button button-primary whatsapp-cta${hasStock && !shippingMethod ? ' is-blocked' : ''}`} type="button" disabled={creating} aria-disabled={hasStock && !shippingMethod ? 'true' : 'false'} onClick={handleWhatsAppClick}><Icon icon={icons.whatsapp} />{creating ? 'Creando pedido…' : 'Pedir por WhatsApp'}</button>
             </div>
           </>
         )}

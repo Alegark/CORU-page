@@ -6,7 +6,8 @@ import type { CoruState, InventoryMovement } from './state'
 import { CatalogRepository } from '../db/repositories/catalog.repository'
 import { OrderRepository, type PendingOrderRecord } from '../db/repositories/orders.repository'
 import type { StoreSettings } from './services/settings.service'
-import type { ProductImageRecord } from './services/image.service'
+import { orderProductImages, type ProductImageRecord } from './services/image.service'
+import { defaultPersonalDeliveryPoints } from '../shared/delivery-points'
 
 /**
  * Persistence is deliberately optional. A local checkout has no database
@@ -55,6 +56,40 @@ function bool(value: unknown): boolean {
 
 function text(value: unknown): string | undefined {
   return typeof value === 'string' ? value : value === undefined || value === null ? undefined : String(value)
+}
+
+/**
+ * The image ordering migration is also guarded at hydration time. This keeps
+ * a Worker deployment safe when the production Turso token exists only as a
+ * Wrangler secret (and therefore cannot be used by the local migration CLI).
+ * The check is cheap, and every statement is idempotent after the first
+ * isolate has completed it.
+ */
+async function ensureProductImageOrderSchema(db: SqlClient): Promise<void> {
+  const hasSortOrder = async (): Promise<boolean> => {
+    const result = await db.execute<Record<string, unknown>>('PRAGMA table_info(product_images)')
+    return result.rows.some((row) => text(row.name) === 'sort_order')
+  }
+
+  if (await hasSortOrder()) return
+
+  try {
+    await db.execute('ALTER TABLE product_images ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0 CHECK (sort_order >= 0)')
+  } catch (error) {
+    // Another isolate may have won the race between PRAGMA and ALTER TABLE.
+    // Re-read the schema before surfacing a real migration failure.
+    if (!(await hasSortOrder())) throw error
+  }
+
+  await db.execute(`UPDATE product_images
+    SET sort_order = (
+      SELECT COUNT(*)
+      FROM product_images previous
+      WHERE previous.product_id = product_images.product_id
+        AND (previous.created_at < product_images.created_at
+          OR (previous.created_at = product_images.created_at AND previous.id <= product_images.id))
+    )`)
+  await db.execute('CREATE INDEX IF NOT EXISTS idx_product_images_order ON product_images(product_id, sort_order, created_at)')
 }
 
 function persistedTimestamp(value: unknown): string | undefined {
@@ -147,6 +182,7 @@ function asImage(row: Record<string, unknown>): ProductImageRecord | undefined {
     ...(processedKey ? { processedKey } : {}),
     mimeType,
     byteSize: integer(row.byte_size) ?? 0,
+    sortOrder: integer(row.sort_order) ?? 0,
     processingStatus,
     ...(approved ? { approvedVariant: processingStatus === 'READY' && processedKey ? 'processed' as const : 'original' as const } : {}),
     ...(text(row.error_code) ? { errorCode: text(row.error_code) } : {}),
@@ -248,7 +284,7 @@ function hydrateOrders(rows: JoinedOrderRow[]): { orders: Order[]; idempotency: 
         const quoteCurrency = row.delivery_quote_currency === 'USD' || row.delivery_quote_currency === 'Bs' ? row.delivery_quote_currency : undefined
         order.shipping = { method: 'YUMMY', addressText: text(row.delivery_address_text)!, ...(typeof row.delivery_lat === 'number' ? { latitude: row.delivery_lat } : {}), ...(typeof row.delivery_lng === 'number' ? { longitude: row.delivery_lng } : {}), ...(integer(row.delivery_quote_amount_minor) !== undefined ? { quoteAmountMinor: integer(row.delivery_quote_amount_minor) } : {}), ...(quoteCurrency ? { quoteCurrency } : {}), ...(text(row.delivery_quote_quoted_at) ? { quoteQuotedAt: text(row.delivery_quote_quoted_at) } : {}), ...(text(row.delivery_quote_external_id) ? { quoteExternalId: text(row.delivery_quote_external_id) } : {}) }
       }
-      if (row.shipping_method === 'NATIONAL' && (row.national_carrier === 'MRW' || row.national_carrier === 'ZOOM') && text(row.national_state) && text(row.national_city)) order.shipping = { method: 'NATIONAL', carrier: row.national_carrier, state: text(row.national_state)!, city: text(row.national_city)!, ...(text(row.national_office_text) ? { officeText: text(row.national_office_text) } : {}) }
+      if (row.shipping_method === 'NATIONAL' && (row.national_carrier === 'MRW' || row.national_carrier === 'ZOOM')) order.shipping = { method: 'NATIONAL', carrier: row.national_carrier, ...(text(row.national_state) ? { state: text(row.national_state) } : {}), ...(text(row.national_city) ? { city: text(row.national_city) } : {}), ...(text(row.national_office_text) ? { officeText: text(row.national_office_text) } : {}) }
       grouped.set(id, order)
     }
     const productId = text(row.product_id)
@@ -286,7 +322,7 @@ export async function hydrateCatalogFromDatabase(state: CoruState, db: SqlClient
   const catalog = new CatalogRepository(db)
   state.products = await catalog.listAll()
 
-  const imagesResult = await db.execute<Record<string, unknown>>('SELECT id, product_id, original_key, processed_key, mime_type, byte_size, processing_status, is_approved, error_code, created_at, updated_at FROM product_images ORDER BY created_at ASC')
+  const imagesResult = await db.execute<Record<string, unknown>>('SELECT id, product_id, original_key, processed_key, mime_type, byte_size, sort_order, processing_status, is_approved, error_code, created_at, updated_at FROM product_images ORDER BY product_id ASC, sort_order ASC, created_at ASC')
   state.images = new Map(imagesResult.rows.map(asImage).filter((entry): entry is ProductImageRecord => Boolean(entry)).map((image) => [image.id, image]))
 
   const promotionsResult = await db.execute<Record<string, unknown>>('SELECT p.id, p.name, p.kind, c.name AS target_category, p.bundle_quantity, p.bundle_price_cents, p.fixed_discount_cents, p.is_active, p.starts_at, p.ends_at FROM promotions p LEFT JOIN categories c ON c.id = p.target_category_id ORDER BY p.created_at DESC')
@@ -303,7 +339,21 @@ export async function hydrateStateFromDatabase(state: CoruState, db: SqlClient):
   try {
     const pointsResult = await db.execute<Record<string, unknown>>('SELECT id, name, address, short_description, latitude, longitude, schedule_text, is_active, sort_order FROM personal_delivery_points ORDER BY sort_order, name')
     const points = pointsResult.rows.map((row) => ({ id: text(row.id) ?? '', name: text(row.name) ?? '', address: text(row.address) ?? '', ...(text(row.short_description) ? { shortDescription: text(row.short_description) } : {}), ...(typeof row.latitude === 'number' ? { latitude: row.latitude } : {}), ...(typeof row.longitude === 'number' ? { longitude: row.longitude } : {}), ...(text(row.schedule_text) ? { scheduleText: text(row.schedule_text) } : {}), active: bool(row.is_active), sortOrder: integer(row.sort_order) ?? 0 })).filter((point) => point.id && point.name && point.address)
-    if (points.length) state.deliveryPoints = points
+
+    // The first production bootstrap had one placeholder point without a
+    // location. Upgrade that row and add the two newly agreed points once;
+    // existing operator edits remain untouched after their ids exist.
+    const byId = new Map(points.map((point) => [point.id, point]))
+    for (const defaultPoint of defaultPersonalDeliveryPoints) {
+      const current = byId.get(defaultPoint.id)
+      const isLegacyPlaceholder = defaultPoint.id === 'coru-punto-central' && current?.address === 'Punto coordinado por CORU'
+      if (!current || isLegacyPlaceholder) {
+        await persistDeliveryPoint(db, defaultPoint)
+        byId.set(defaultPoint.id, { ...defaultPoint })
+      }
+    }
+    const hydratedPoints = [...byId.values()].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+    if (hydratedPoints.length) state.deliveryPoints = hydratedPoints
   } catch {
     // The table is added by the v1.1 migration; keep seeded points if an
     // older database is still being upgraded.
@@ -344,7 +394,10 @@ export async function ensureStateHydrated(state: CoruState, env: CoruBindings): 
   if (!db || !key) return null
   const cached = hydrationCache.get(state)
   if (!cached || cached.key !== key) {
-    const promise = hydrateStateFromDatabase(state, db)
+    const promise = (async () => {
+      await ensureProductImageOrderSchema(db)
+      await hydrateStateFromDatabase(state, db)
+    })()
     hydrationCache.set(state, { key, promise })
     try {
       await promise
@@ -379,6 +432,10 @@ export async function persistCategory(db: SqlClient, category: Category, updated
   await db.execute('INSERT INTO categories (id, slug, name, sort_order, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET slug = excluded.slug, name = excluded.name, sort_order = excluded.sort_order, is_active = excluded.is_active, updated_at = excluded.updated_at', [category.id, category.slug, category.name, category.sortOrder, category.active ? 1 : 0, updatedAt, updatedAt])
 }
 
+export async function deleteCategory(db: SqlClient, categoryId: string): Promise<void> {
+  await db.execute('DELETE FROM categories WHERE id = ?', [categoryId])
+}
+
 export async function persistDeliveryPoint(db: SqlClient, point: PersonalDeliveryPoint, updatedAt = new Date().toISOString()): Promise<void> {
   await db.execute('INSERT INTO personal_delivery_points (id, name, address, short_description, latitude, longitude, schedule_text, is_active, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, address = excluded.address, short_description = excluded.short_description, latitude = excluded.latitude, longitude = excluded.longitude, schedule_text = excluded.schedule_text, is_active = excluded.is_active, sort_order = excluded.sort_order, updated_at = excluded.updated_at', [point.id, point.name, point.address, point.shortDescription ?? null, point.latitude ?? null, point.longitude ?? null, point.scheduleText ?? null, point.active ? 1 : 0, point.sortOrder, updatedAt, updatedAt])
 }
@@ -386,7 +443,7 @@ export async function persistDeliveryPoint(db: SqlClient, point: PersonalDeliver
 export async function persistProduct(db: SqlClient, state: CoruState, product: Product, updatedAt = new Date().toISOString()): Promise<void> {
   const category = state.categories.find((candidate) => candidate.name === product.category)
   if (!category) return
-  const image = [...state.images.values()].find((candidate) => candidate.productId === product.id && candidate.approvedVariant)
+  const image = orderProductImages([...state.images.values()].filter((candidate) => candidate.productId === product.id && candidate.approvedVariant))[0]
   await db.execute('INSERT INTO products (id, category_id, sku, slug, name, description, material, artwork, size_label, price_cents, stock_quantity, fulfillment_type, measurements_text, inner_diameter_mm, circumference_mm, lead_time, is_active, promo_eligible, primary_image_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET category_id = excluded.category_id, slug = excluded.slug, name = excluded.name, description = excluded.description, material = excluded.material, artwork = excluded.artwork, size_label = excluded.size_label, price_cents = excluded.price_cents, stock_quantity = excluded.stock_quantity, fulfillment_type = excluded.fulfillment_type, measurements_text = excluded.measurements_text, inner_diameter_mm = excluded.inner_diameter_mm, circumference_mm = excluded.circumference_mm, lead_time = excluded.lead_time, is_active = excluded.is_active, promo_eligible = excluded.promo_eligible, primary_image_id = excluded.primary_image_id, updated_at = excluded.updated_at', [product.id, category.id, product.id, product.slug, product.name, product.description, product.material, product.artwork, product.sizeLabel, product.priceCents, product.stockQuantity, product.fulfillmentType ?? 'STOCK', product.measurementsText ?? null, product.innerDiameterMm ?? null, product.circumferenceMm ?? null, product.leadTime ?? null, product.active ? 1 : 0, product.promoEligible ? 1 : 0, image?.id ?? null, updatedAt, updatedAt])
 }
 
@@ -394,7 +451,7 @@ export async function persistProduct(db: SqlClient, state: CoruState, product: P
 export async function persistProductAndMovement(db: SqlClient, state: CoruState, product: Product, movement: InventoryMovement, updatedAt = new Date().toISOString()): Promise<void> {
   const category = state.categories.find((candidate) => candidate.name === product.category)
   if (!category) return
-  const image = [...state.images.values()].find((candidate) => candidate.productId === product.id && candidate.approvedVariant)
+  const image = orderProductImages([...state.images.values()].filter((candidate) => candidate.productId === product.id && candidate.approvedVariant))[0]
   await db.transaction(async (tx) => {
     await tx.execute('INSERT INTO products (id, category_id, sku, slug, name, description, material, artwork, size_label, price_cents, stock_quantity, fulfillment_type, measurements_text, inner_diameter_mm, circumference_mm, lead_time, is_active, promo_eligible, primary_image_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET category_id = excluded.category_id, slug = excluded.slug, name = excluded.name, description = excluded.description, material = excluded.material, artwork = excluded.artwork, size_label = excluded.size_label, price_cents = excluded.price_cents, stock_quantity = excluded.stock_quantity, fulfillment_type = excluded.fulfillment_type, measurements_text = excluded.measurements_text, inner_diameter_mm = excluded.inner_diameter_mm, circumference_mm = excluded.circumference_mm, lead_time = excluded.lead_time, is_active = excluded.is_active, promo_eligible = excluded.promo_eligible, primary_image_id = excluded.primary_image_id, updated_at = excluded.updated_at', [product.id, category.id, product.id, product.slug, product.name, product.description, product.material, product.artwork, product.sizeLabel, product.priceCents, product.stockQuantity, product.fulfillmentType ?? 'STOCK', product.measurementsText ?? null, product.innerDiameterMm ?? null, product.circumferenceMm ?? null, product.leadTime ?? null, product.active ? 1 : 0, product.promoEligible ? 1 : 0, image?.id ?? null, updatedAt, updatedAt])
     await tx.execute('INSERT INTO inventory_movements (id, product_id, order_id, movement_type, delta, reverses_movement_id, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [movement.id, product.id, movement.orderId ?? null, movement.type, movement.delta, movement.reversesMovementId ?? null, movement.note ?? null, movement.createdAt])
@@ -407,7 +464,7 @@ export async function persistPromotion(db: SqlClient, state: CoruState, promotio
 }
 
 export async function persistImage(db: SqlClient, image: ProductImageRecord): Promise<void> {
-  await db.execute('INSERT INTO product_images (id, product_id, original_key, processed_key, mime_type, byte_size, processing_status, is_approved, error_code, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET processed_key = excluded.processed_key, processing_status = excluded.processing_status, is_approved = excluded.is_approved, error_code = excluded.error_code, updated_at = excluded.updated_at', [image.id, image.productId, image.originalKey, image.processedKey ?? null, image.mimeType, image.byteSize, image.processingStatus, image.approvedVariant ? 1 : 0, image.errorCode ?? null, image.createdAt, image.updatedAt])
+  await db.execute('INSERT INTO product_images (id, product_id, original_key, processed_key, mime_type, byte_size, sort_order, processing_status, is_approved, error_code, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET processed_key = excluded.processed_key, sort_order = excluded.sort_order, processing_status = excluded.processing_status, is_approved = excluded.is_approved, error_code = excluded.error_code, updated_at = excluded.updated_at', [image.id, image.productId, image.originalKey, image.processedKey ?? null, image.mimeType, image.byteSize, image.sortOrder, image.processingStatus, image.approvedVariant ? 1 : 0, image.errorCode ?? null, image.createdAt, image.updatedAt])
 }
 
 export async function persistRate(db: SqlClient, state: CoruState, observedAt = state.rateUpdatedAt): Promise<void> {
@@ -549,6 +606,11 @@ export async function persistAnalytics(db: SqlClient, events: AnalyticsEvent[]):
 
 export async function purgePersistedAnalytics(db: SqlClient, cutoff: string): Promise<void> {
   await db.execute('DELETE FROM analytics_events WHERE occurred_at < ?', [cutoff])
+}
+
+export async function purgePersistedAnalyticsBefore(db: SqlClient, cutoff: string): Promise<number> {
+  const result = await db.execute('DELETE FROM analytics_events WHERE occurred_at < ?', [cutoff])
+  return result.rowsAffected
 }
 
 export function schedulePersistence(c: { executionCtx?: { waitUntil(promise: Promise<unknown>): void } }, work: Promise<unknown>): void {

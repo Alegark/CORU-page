@@ -11,6 +11,7 @@ import { quoteYummyDelivery } from '../services/yummy.service'
 import { createHttpRateProvider, getPublicRate, refreshRate } from '../services/exchange-rate.service'
 import { createBinanceP2pProvider } from '../services/exchange-rate/binance-p2p.adapter'
 import { recordAnalytics } from '../services/analytics.service'
+import { orderProductImages } from '../services/image.service'
 import { findActivePromotion, findPersistedOrder, hydrateCatalogFromDatabase, persistAnalytics, persistPendingOrder, persistRate, schedulePersistence } from '../persistence'
 import { MemoryMediaStore, R2MediaStore, type R2BucketLike } from '../adapters/r2'
 import { OrderRepository } from '../../db/repositories/orders.repository'
@@ -38,8 +39,9 @@ async function refreshCatalogForRequest(c: Context<CoruEnv>): Promise<void> {
 
 function toPublicProduct(product: ReturnType<typeof getPublicProducts>[number], promotion = activePromotion()): PublicProduct {
   const { stockQuantity: _stock, active: _active, primaryImageApproved: _approved, promoEligible: _promo, ...publicProduct } = product
-  const hasApprovedImage = [...state.images.values()].some((image) => image.productId === product.id && Boolean(image.approvedVariant))
-  return { ...publicProduct, promotionEligible: Boolean(promotion && product.promoEligible && (!promotion.targetCategory || product.category === promotion.targetCategory)), ...(hasApprovedImage ? { imageUrl: `/api/products/${encodeURIComponent(product.slug)}/image` } : {}) }
+  const approvedImages = orderProductImages([...state.images.values()].filter((image) => image.productId === product.id && Boolean(image.approvedVariant)))
+  const imageUrls = approvedImages.map((image) => `/api/products/${encodeURIComponent(product.slug)}/images/${encodeURIComponent(image.id)}`)
+  return { ...publicProduct, promotionEligible: Boolean(promotion && product.promoEligible && (!promotion.targetCategory || product.category === promotion.targetCategory)), ...(imageUrls.length ? { imageUrl: `/api/products/${encodeURIComponent(product.slug)}/image`, imageUrls } : {}) }
 }
 
 function mediaStorage(env: CoruEnv['Bindings']): MemoryMediaStore | R2MediaStore {
@@ -153,8 +155,21 @@ publicApi.get('/api/products/:slug/image', async (c) => {
   await refreshCatalogForRequest(c)
   const product = publicProductForSlug(c.req.param('slug'))
   if (!product) return c.json({ error: { code: 'NOT_FOUND', message: 'Imagen no encontrada.' } } satisfies ApiError, 404)
-  const image = [...state.images.values()].find((candidate) => candidate.productId === product.id && candidate.approvedVariant)
+  const image = orderProductImages([...state.images.values()].filter((candidate) => candidate.productId === product.id && candidate.approvedVariant))[0]
   if (!image) return c.json({ error: { code: 'NOT_FOUND', message: 'Imagen no encontrada.' } } satisfies ApiError, 404)
+  const variant = image.approvedVariant === 'processed' && image.processedKey ? 'processed' : 'original'
+  const key = variant === 'processed' ? image.processedKey! : image.originalKey
+  const body = await mediaStorage(c.env).get?.(key)
+  if (!body) return c.json({ error: { code: 'NOT_FOUND', message: 'Imagen no encontrada.' } } satisfies ApiError, 404)
+  return new Response(body, { status: 200, headers: { 'Content-Type': variant === 'processed' ? 'image/webp' : image.mimeType, 'Cache-Control': 'public, max-age=3600', 'X-Content-Type-Options': 'nosniff' } })
+})
+
+publicApi.get('/api/products/:slug/images/:imageId', async (c) => {
+  await refreshCatalogForRequest(c)
+  const product = publicProductForSlug(c.req.param('slug'))
+  if (!product) return c.json({ error: { code: 'NOT_FOUND', message: 'Imagen no encontrada.' } } satisfies ApiError, 404)
+  const image = state.images.get(c.req.param('imageId'))
+  if (!image || image.productId !== product.id || !image.approvedVariant) return c.json({ error: { code: 'NOT_FOUND', message: 'Imagen no encontrada.' } } satisfies ApiError, 404)
   const variant = image.approvedVariant === 'processed' && image.processedKey ? 'processed' : 'original'
   const key = variant === 'processed' ? image.processedKey! : image.originalKey
   const body = await mediaStorage(c.env).get?.(key)

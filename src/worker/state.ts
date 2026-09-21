@@ -3,6 +3,7 @@ import type { AnalyticsEvent, Category, Order, Product, Promotion, PersonalDeliv
 import { defaultSettings, type StoreSettings } from './services/settings.service'
 import type { ProductImageRecord } from './services/image.service'
 import { clearHydrationCache } from './persistence'
+import { defaultPersonalDeliveryPoints } from '../shared/delivery-points'
 
 export type InventoryMovement = {
   id: string
@@ -57,7 +58,7 @@ const initialCategories: Category[] = [
   { id: 'cat-accesorios', slug: 'accesorios', name: 'Accesorios', sortOrder: 2, active: true },
 ]
 const initialPromotions: Promotion[] = [{ id: 'promo-3x10', name: '3 anillos por $10', kind: 'BUNDLE', targetCategory: 'Anillos', bundleQuantity: 3, bundlePriceCents: 1000, active: true }]
-const initialDeliveryPoints: PersonalDeliveryPoint[] = [{ id: 'coru-punto-central', name: 'Punto CORU · Centro', address: 'Punto coordinado por CORU', shortDescription: 'Confirma la hora por WhatsApp.', scheduleText: 'Lunes a sábado · 10:00–17:00', active: true, sortOrder: 1 }]
+const initialDeliveryPoints: PersonalDeliveryPoint[] = defaultPersonalDeliveryPoints
 
 function initialRateExpiry(now = new Date()): string {
   const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Caracas', year: 'numeric', month: '2-digit', day: '2-digit' })

@@ -7,6 +7,7 @@ export type ProductImageRecord = {
   processedKey?: string
   mimeType: 'image/jpeg' | 'image/png' | 'image/webp'
   byteSize: number
+  sortOrder: number
   processingStatus: ImageProcessingStatus
   approvedVariant?: 'original' | 'processed'
   errorCode?: string
@@ -24,7 +25,7 @@ export type ImageProcessingProvider = {
 }
 
 export class ImageServiceError extends Error {
-  constructor(public readonly code: 'IMAGE_INVALID' | 'IMAGE_TOO_LARGE' | 'IMAGE_STORAGE_FAILED' | 'IMAGE_PROCESSING_FAILED' | 'IMAGE_APPROVAL_INVALID', message: string) {
+  constructor(public readonly code: 'IMAGE_INVALID' | 'IMAGE_TOO_LARGE' | 'IMAGE_STORAGE_FAILED' | 'IMAGE_PROCESSING_FAILED' | 'IMAGE_APPROVAL_INVALID' | 'IMAGE_ORDER_INVALID', message: string) {
     super(message)
     this.name = 'ImageServiceError'
   }
@@ -48,6 +49,55 @@ function validMime(value: string): value is ProductImageRecord['mimeType'] {
   return value === 'image/jpeg' || value === 'image/png' || value === 'image/webp'
 }
 
+function validateUploadInput(mimeType: string, body: ArrayBuffer): void {
+  if (!validMime(mimeType)) throw new ImageServiceError('IMAGE_INVALID', 'Solo se aceptan imágenes JPG, PNG o WEBP.')
+  if (body.byteLength <= 0) throw new ImageServiceError('IMAGE_INVALID', 'La imagen está vacía.')
+  if (body.byteLength > MAX_BYTES) throw new ImageServiceError('IMAGE_TOO_LARGE', 'La imagen supera el límite de 15 MB.')
+}
+
+function imageKey(productId: string, imageId: string, mimeType: ProductImageRecord['mimeType']): string {
+  return `products/${productId}/original/${imageId}.${MIME_TO_EXTENSION[mimeType]}`
+}
+
+/** Stores the upload exactly as provided; no background removal or derivative is created. */
+export async function uploadProductImage(options: {
+  productId: string
+  body: ArrayBuffer | Uint8Array
+  mimeType: string
+  sortOrder: number
+  storage: ImageStorage
+  now?: Date
+}): Promise<ProductImageRecord> {
+  const body = await asBytes(options.body)
+  validateUploadInput(options.mimeType, body)
+  const mimeType = options.mimeType as ProductImageRecord['mimeType']
+  const imageId = id()
+  const originalKey = imageKey(options.productId, imageId, mimeType)
+  try {
+    await options.storage.put(originalKey, body, { contentType: mimeType })
+  } catch {
+    throw new ImageServiceError('IMAGE_STORAGE_FAILED', 'No se pudo guardar la imagen original.')
+  }
+  const now = options.now ?? new Date()
+  return { id: imageId, productId: options.productId, originalKey, mimeType, byteSize: body.byteLength, sortOrder: Math.max(1, Math.trunc(options.sortOrder)), processingStatus: 'READY', approvedVariant: 'original', createdAt: now.toISOString(), updatedAt: now.toISOString() }
+}
+
+/** Returns images ordered by the administrator's explicit position. */
+export function orderProductImages(images: readonly ProductImageRecord[]): ProductImageRecord[] {
+  return [...images].sort((a, b) => a.sortOrder - b.sortOrder || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+}
+
+/** Reassigns every image position atomically in memory before persistence. */
+export function reorderProductImages(images: readonly ProductImageRecord[], orderedIds: readonly string[]): ProductImageRecord[] {
+  const currentIds = new Set(images.map((image) => image.id))
+  const requestedIds = new Set(orderedIds)
+  if (orderedIds.length !== images.length || requestedIds.size !== orderedIds.length || orderedIds.some((imageId) => !currentIds.has(imageId))) {
+    throw new ImageServiceError('IMAGE_ORDER_INVALID', 'La posición de las imágenes no es válida.')
+  }
+  const byId = new Map(images.map((image) => [image.id, image]))
+  return orderedIds.map((imageId, index) => ({ ...byId.get(imageId)!, sortOrder: index + 1, updatedAt: new Date().toISOString() }))
+}
+
 export async function processProductImage(options: {
   productId: string
   body: ArrayBuffer | Uint8Array | Blob
@@ -56,22 +106,20 @@ export async function processProductImage(options: {
   provider: ImageProcessingProvider
   now?: Date
 }): Promise<ProductImageRecord> {
-  if (!validMime(options.mimeType)) throw new ImageServiceError('IMAGE_INVALID', 'Solo se aceptan imágenes JPG, PNG o WEBP.')
   const body = await asBytes(options.body)
-  if (body.byteLength <= 0) throw new ImageServiceError('IMAGE_INVALID', 'La imagen está vacía.')
-  if (body.byteLength > MAX_BYTES) throw new ImageServiceError('IMAGE_TOO_LARGE', 'La imagen supera el límite de 15 MB.')
+  validateUploadInput(options.mimeType, body)
   const now = options.now ?? new Date()
   const imageId = id()
-  const originalKey = `products/${options.productId}/original/${imageId}.${MIME_TO_EXTENSION[options.mimeType]}`
+  const originalKey = imageKey(options.productId, imageId, options.mimeType as ProductImageRecord['mimeType'])
   const processedKey = `products/${options.productId}/processed/${imageId}.webp`
   try {
     await options.storage.put(originalKey, body, { contentType: options.mimeType })
   } catch {
     throw new ImageServiceError('IMAGE_STORAGE_FAILED', 'No se pudo guardar la imagen original.')
   }
-  const record: ProductImageRecord = { id: imageId, productId: options.productId, originalKey, processedKey, mimeType: options.mimeType, byteSize: body.byteLength, processingStatus: 'PROCESSING', createdAt: now.toISOString(), updatedAt: now.toISOString() }
+  const record: ProductImageRecord = { id: imageId, productId: options.productId, originalKey, processedKey, mimeType: options.mimeType as ProductImageRecord['mimeType'], byteSize: body.byteLength, sortOrder: 1, processingStatus: 'PROCESSING', createdAt: now.toISOString(), updatedAt: now.toISOString() }
   try {
-    const processed = await options.provider.process({ body, mimeType: options.mimeType })
+    const processed = await options.provider.process({ body, mimeType: options.mimeType as ProductImageRecord['mimeType'] })
     if (processed.byteLength <= 0) throw new Error('empty processed image')
     await options.storage.put(processedKey, processed, { contentType: 'image/webp' })
     record.processingStatus = 'READY'

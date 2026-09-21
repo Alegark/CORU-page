@@ -16,6 +16,24 @@ describe('CORU Worker API contracts', () => {
     expect(body.data[0]).toHaveProperty('promotionEligible', true)
   })
 
+  it('keeps public SPA routes outside the administrative auth boundary', async () => {
+    const requested: string[] = []
+    const assets = {
+      fetch: async (request: Request) => {
+        requested.push(new URL(request.url).pathname)
+        return new Response('<!doctype html>', { status: 200, headers: { 'Content-Type': 'text/html' } })
+      },
+    }
+
+    for (const path of ['/guia-de-tallas', '/privacidad']) {
+      const response = await app.request(path, {}, { ENVIRONMENT: 'production', TEAM_DOMAIN: 'https://auth.example.com', POLICY_AUD: 'coru', ASSETS: assets })
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-type')).toContain('text/html')
+    }
+
+    expect(requested).toEqual(['/guia-de-tallas', '/privacidad'])
+  })
+
   it('keeps promotion eligibility aligned with the product rule', async () => {
     state.products.find((product) => product.id === 'orbita-oscura')!.promoEligible = false
     const response = await app.request('/api/catalog')
@@ -39,16 +57,54 @@ describe('CORU Worker API contracts', () => {
     expect(await response.json()).toEqual({ data: [{ id: 'cat-anillos', slug: 'anillos', name: 'Anillos', sortOrder: 1 }] })
   })
 
+  it('removes empty admin categories but archives categories with products', async () => {
+    state.categories.push({ id: 'empty-category', slug: 'empty-category', name: 'Vacía', sortOrder: 3, active: false })
+    const env = { DEV_ADMIN_BYPASS: 'true', ENVIRONMENT: 'local' }
+
+    const removed = await app.request('/api/admin/categories/empty-category', { method: 'DELETE' }, env)
+    expect(removed.status).toBe(200)
+    expect((await removed.json() as { data: { active: boolean } }).data.active).toBe(false)
+    expect(state.categories.some((category) => category.id === 'empty-category')).toBe(false)
+
+    const archived = await app.request('/api/admin/categories/cat-anillos', { method: 'DELETE' }, env)
+    expect(archived.status).toBe(200)
+    expect(state.categories.find((category) => category.id === 'cat-anillos')?.active).toBe(false)
+  })
+
   it('serves only an approved product image through a public proxy', async () => {
-    const image = { id: 'image-1', productId: 'orbita-oscura', originalKey: 'products/orbita-oscura/original/image-1.jpg', processedKey: 'products/orbita-oscura/processed/image-1.webp', mimeType: 'image/jpeg' as const, byteSize: 2, processingStatus: 'FAILED' as const, approvedVariant: 'original' as const, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+    const image = { id: 'image-1', productId: 'orbita-oscura', originalKey: 'products/orbita-oscura/original/image-1.jpg', processedKey: 'products/orbita-oscura/processed/image-1.webp', mimeType: 'image/jpeg' as const, byteSize: 2, sortOrder: 1, processingStatus: 'FAILED' as const, approvedVariant: 'original' as const, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
     state.images.set(image.id, image)
     state.media.set(image.originalKey, new Uint8Array([1, 2]).buffer)
     const catalog = await (await app.request('/api/catalog')).json() as { data: Array<Record<string, unknown>> }
     expect(catalog.data[0].imageUrl).toBe('/api/products/orbita-oscura/image')
+    expect(catalog.data[0].imageUrls).toEqual(['/api/products/orbita-oscura/images/image-1'])
     const response = await app.request('/api/products/orbita-oscura/image')
     expect(response.status).toBe(200)
     expect(response.headers.get('content-type')).toContain('image/jpeg')
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([1, 2]))
+    const specific = await app.request('/api/products/orbita-oscura/images/image-1')
+    expect(specific.status).toBe(200)
+    expect(new Uint8Array(await specific.arrayBuffer())).toEqual(new Uint8Array([1, 2]))
+  })
+
+  it('stores normal product uploads and persists their explicit gallery order', async () => {
+    const env = { DEV_ADMIN_BYPASS: 'true', ENVIRONMENT: 'local' }
+    const upload = (body: number[]) => app.request('/api/admin/products/orbita-oscura/images', { method: 'POST', headers: { 'Content-Type': 'image/png', 'X-Image-Mime': 'image/png' }, body: new Uint8Array(body) }, env)
+    const first = await upload([1, 2])
+    const second = await upload([3, 4])
+    expect(first.status).toBe(201)
+    expect(second.status).toBe(201)
+    const firstImage = (await first.json() as { data: { id: string; processingStatus: string; approvedVariant: string; sortOrder: number } }).data
+    const secondImage = (await second.json() as { data: { id: string; processingStatus: string; approvedVariant: string; sortOrder: number } }).data
+    expect(firstImage).toMatchObject({ processingStatus: 'READY', approvedVariant: 'original', sortOrder: 1 })
+    expect(secondImage.sortOrder).toBe(2)
+    const preview = await app.request(`/api/admin/products/orbita-oscura/images/${firstImage.id}/preview`, {}, env)
+    expect(preview.status).toBe(200)
+    expect(new Uint8Array(await preview.arrayBuffer())).toEqual(new Uint8Array([1, 2]))
+
+    const reordered = await app.request('/api/admin/products/orbita-oscura/images/reorder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [secondImage.id, firstImage.id] }) }, env)
+    expect(reordered.status).toBe(200)
+    expect((await reordered.json() as { data: Array<{ id: string; sortOrder: number }> }).data.map((image) => [image.id, image.sortOrder])).toEqual([[secondImage.id, 1], [firstImage.id, 2]])
   })
 
   it('rejects malformed order intents with the stable validation envelope', async () => {
@@ -59,9 +115,10 @@ describe('CORU Worker API contracts', () => {
 
   it('exposes anonymous traffic statistics through the protected admin endpoint', async () => {
     state.analytics.push(
-      { name: 'catalog_view', sessionId: 'traffic-a', source: 'directo', occurredAt: '2026-09-18T10:00:00.000Z' },
-      { name: 'catalog_view', sessionId: 'traffic-b', source: 'instagram', occurredAt: '2026-09-18T11:00:00.000Z' },
-      { name: 'product_view', sessionId: 'traffic-b', source: 'instagram', occurredAt: '2026-09-18T11:01:00.000Z' },
+      { name: 'catalog_view', sessionId: 'traffic-a', source: 'directo', occurredAt: '2026-09-18T10:00:00.000Z', properties: { visitorId: 'visitor-a' } },
+      { name: 'catalog_view', sessionId: 'traffic-a-new-tab', source: 'directo', occurredAt: '2026-09-18T10:01:00.000Z', properties: { visitorId: 'visitor-a' } },
+      { name: 'catalog_view', sessionId: 'traffic-b', source: 'instagram', occurredAt: '2026-09-18T11:00:00.000Z', properties: { visitorId: 'visitor-b' } },
+      { name: 'product_view', sessionId: 'traffic-b', source: 'instagram', occurredAt: '2026-09-18T11:01:00.000Z', properties: { visitorId: 'visitor-b' } },
     )
     const env = { DEV_ADMIN_BYPASS: 'true', ENVIRONMENT: 'local' }
     const response = await app.request('/api/admin/analytics/traffic?from=2026-09-18&to=2026-09-18', {}, env)
@@ -70,6 +127,24 @@ describe('CORU Worker API contracts', () => {
 
     const invalid = await app.request('/api/admin/analytics/traffic?from=not-a-date', {}, env)
     expect(invalid.status).toBe(422)
+  })
+
+  it('exposes the V2 summary and product interest behind the admin guard', async () => {
+    state.analytics.push(
+      { name: 'catalog_view', sessionId: 'summary-a', source: 'ig', occurredAt: '2026-09-18T10:00:00.000Z', properties: { visitorId: 'summary-visitor', device: 'mobile' } },
+      { name: 'product_view', sessionId: 'summary-a', source: 'instagram', occurredAt: '2026-09-18T10:01:00.000Z', properties: { visitorId: 'summary-visitor', productId: 'orbita-oscura', productName: 'Órbita oscura', unitPriceCents: 400, device: 'mobile' } },
+      { name: 'cart_add', sessionId: 'summary-a', source: 'instagram', occurredAt: '2026-09-18T10:02:00.000Z', properties: { visitorId: 'summary-visitor', productId: 'orbita-oscura', quantityDelta: 2, unitPriceCents: 400, device: 'mobile' } },
+      { name: 'order_intent', sessionId: 'summary-a', source: 'instagram', occurredAt: '2026-09-18T10:03:00.000Z', properties: { visitorId: 'summary-visitor', device: 'mobile' } },
+    )
+    const env = { DEV_ADMIN_BYPASS: 'true', ENVIRONMENT: 'local' }
+    const summary = await app.request('/api/admin/analytics/summary?from=2026-09-18&to=2026-09-18', {}, env)
+    expect(summary.status).toBe(200)
+    expect(await summary.json()).toMatchObject({ data: { kpis: { uniqueVisits: 1, unitsAdded: 2, whatsappIntents: 1 }, commercial: { potentialValueCents: 800 } } })
+    const products = await app.request('/api/admin/analytics/products?from=2026-09-18&to=2026-09-18', {}, env)
+    expect(products.status).toBe(200)
+    expect(await products.json()).toMatchObject({ data: { products: [{ productId: 'orbita-oscura', interestScore: 7, unitsAdded: 2 }] } })
+    const publicResponse = await app.request('/api/admin/analytics/summary?from=2026-09-18&to=2026-09-18')
+    expect(publicResponse.status).toBe(403)
   })
 
   it('creates an idempotent pending intent and confirms stock once', async () => {
@@ -98,7 +173,7 @@ describe('CORU Worker API contracts', () => {
     expect(response.status).toBe(200)
     const body = await response.json() as { data: { rateMicros?: number; whatsappUrl: string } }
     expect(body.data.rateMicros).toBe(state.currentRateMicros)
-    expect(decodeURIComponent(body.data.whatsappUrl)).toContain('Promo: 3 anillos por $10')
+    expect(decodeURIComponent(body.data.whatsappUrl)).toContain('- Promoción: 3 anillos por $10')
   })
 
   it('does not create new intents while the store is inactive', async () => {

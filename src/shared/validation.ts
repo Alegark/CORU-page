@@ -24,8 +24,13 @@ function parseShipping(value: unknown, details: Array<{ path: string; message: s
   }
   if (candidate.method === 'NATIONAL') {
     if (candidate.carrier !== 'MRW' && candidate.carrier !== 'ZOOM') details.push({ path: 'shipping.carrier', message: 'La empresa de envío no es válida.' })
-    for (const key of ['state', 'city'] as const) if (typeof candidate[key] !== 'string' || candidate[key].trim().length === 0 || candidate[key].length > 100) details.push({ path: `shipping.${key}`, message: 'Este campo es obligatorio.' })
-    return (candidate.carrier === 'MRW' || candidate.carrier === 'ZOOM') && typeof candidate.state === 'string' && candidate.state.trim() && typeof candidate.city === 'string' && candidate.city.trim() ? { method: 'NATIONAL', carrier: candidate.carrier, state: candidate.state.trim(), city: candidate.city.trim(), ...(typeof candidate.officeText === 'string' && candidate.officeText.trim() ? { officeText: candidate.officeText.trim().slice(0, 160) } : {}) } : undefined
+    const location: Partial<Record<'state' | 'city' | 'officeText', string>> = {}
+    for (const key of ['state', 'city', 'officeText'] as const) {
+      const raw = candidate[key]
+      if (raw !== undefined && (typeof raw !== 'string' || raw.length > (key === 'officeText' ? 160 : 100))) details.push({ path: `shipping.${key}`, message: 'El dato de destino no es válido.' })
+      if (typeof raw === 'string' && raw.trim()) location[key] = raw.trim().slice(0, key === 'officeText' ? 160 : 100)
+    }
+    return candidate.carrier === 'MRW' || candidate.carrier === 'ZOOM' ? { method: 'NATIONAL', carrier: candidate.carrier, ...location } : undefined
   }
   details.push({ path: 'shipping.method', message: 'La modalidad de entrega no es válida.' })
   return undefined
@@ -66,7 +71,8 @@ export function parseOrderIntentInput(input: unknown): ValidationResult<{ lines:
 }
 
 const analyticsNames = new Set(['catalog_view', 'product_view', 'cart_add', 'order_intent', 'order_confirmed', 'size_guide_view', 'shipping_method_selected', 'yummy_quote_requested', 'yummy_quote_succeeded', 'yummy_quote_failed', 'preorder_intent_created', 'preorder_deposit_recorded', 'preorder_ready', 'preorder_completed'])
-const forbiddenKeys = new Set(['name', 'phone', 'email', 'address', 'message', 'customertext', 'customer_text'])
+const analyticsPropertyKeys = new Set(['productId', 'productName', 'category', 'promoEligible', 'fulfillment_type', 'unitPriceCents', 'quantityDelta', 'device', 'visitorId', 'productCount', 'promoApplied', 'currency', 'orderReference', 'method', 'shipping_method', 'carrier', 'amountMinor', 'status', 'stage'])
+const forbiddenKeys = new Set(['name', 'phone', 'email', 'address', 'message', 'customertext', 'customer_text', 'coordinates', 'latitude', 'longitude', 'paymentnote', 'payment_note', 'ip', 'token'])
 
 export function parseAnalyticsInput(input: unknown): ValidationResult<{ events: AnalyticsEvent[] }> {
   if (!input || typeof input !== 'object') return { ok: false, details: [{ path: '', message: 'El cuerpo debe ser un objeto.' }] }
@@ -88,7 +94,16 @@ export function parseAnalyticsInput(input: unknown): ValidationResult<{ events: 
       if (!properties || typeof properties !== 'object' || Array.isArray(properties)) details.push({ path: `events.${index}.properties`, message: 'Las propiedades contienen datos no permitidos.' })
       else {
         const record = properties as Record<string, unknown>
-        const invalid = Object.entries(record).some(([key, value]) => forbiddenKeys.has(key.toLowerCase()) || (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') || (typeof value === 'string' && value.length > 120) || (typeof value === 'number' && !Number.isFinite(value)))
+        const invalid = Object.entries(record).some(([key, value]) => {
+          const lowerKey = key.toLowerCase()
+          if (!analyticsPropertyKeys.has(key) || forbiddenKeys.has(lowerKey) || /customer|phone|email|address|coordinate|payment|rawip|device.?token/.test(lowerKey)) return true
+          if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') return true
+          if (typeof value === 'string' && value.length > 120) return true
+          if (typeof value === 'number' && !Number.isFinite(value)) return true
+          if (key === 'unitPriceCents' && (typeof value !== 'number' || !Number.isInteger(value) || value < 0)) return true
+          if (key === 'quantityDelta' && (typeof value !== 'number' || !Number.isInteger(value) || value < 1)) return true
+          return false
+        })
         if (invalid || Object.keys(record).length > 20) details.push({ path: `events.${index}.properties`, message: 'Las propiedades contienen datos no permitidos.' })
         else cleanProperties = record as Record<string, string | number | boolean>
       }

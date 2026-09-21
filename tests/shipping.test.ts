@@ -6,18 +6,18 @@ describe('shipping and delivery points', () => {
   beforeEach(() => resetState())
 
   it('publishes active points in operator order and keeps the map metadata optional', async () => {
-    state.deliveryPoints.push({ id: 'point-second', name: 'Punto Sur', address: 'Av. 2', active: true, sortOrder: 2, latitude: 10.1, longitude: -71.6 })
+    state.deliveryPoints.push({ id: 'point-second', name: 'Punto Sur', address: 'Av. 2', active: true, sortOrder: 4, latitude: 10.1, longitude: -71.6 })
     state.deliveryPoints.push({ id: 'point-hidden', name: 'Punto oculto', address: 'No mostrar', active: false, sortOrder: 0 })
     const response = await app.request('/api/personal-delivery-points')
     expect(response.status).toBe(200)
     const body = await response.json() as { data: Array<Record<string, unknown>> }
-    expect(body.data.map((point) => point.id)).toEqual(['coru-punto-central', 'point-second'])
-    expect(body.data[1]).toMatchObject({ latitude: 10.1, longitude: -71.6 })
+    expect(body.data.map((point) => point.id)).toEqual(['coru-punto-central', 'coru-la-paragua', 'coru-la-campana', 'point-second'])
+    expect(body.data[3]).toMatchObject({ latitude: 10.1, longitude: -71.6 })
     expect(body.data[0]).not.toHaveProperty('active')
   })
 
   it('returns a fresh active list when a selected point becomes stale', async () => {
-    state.deliveryPoints[0].active = false
+    state.deliveryPoints.forEach((point) => { point.active = false })
     const response = await app.request('/api/orders/whatsapp', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'stale-point-1' }, body: JSON.stringify({ lines: [{ productId: 'orbita-oscura', quantity: 1 }], currency: 'USD', shipping: { method: 'PERSONAL', deliveryPointId: 'coru-punto-central' } }) })
     expect(response.status).toBe(409)
     expect(await response.json()).toMatchObject({ error: { code: 'DELIVERY_POINT_UNAVAILABLE', details: { points: [] } } })
@@ -54,15 +54,30 @@ describe('shipping and delivery points', () => {
     expect(national.status).toBe(200)
     const nationalOrder = (await national.json() as { data: { shipping?: Record<string, unknown>; whatsappUrl: string; quote: { totalCents: number } } }).data
     expect(nationalOrder.shipping).toMatchObject({ method: 'NATIONAL', carrier: 'ZOOM', state: 'Zulia', city: 'Maracaibo', officeText: 'Agencia Centro' })
-    expect(decodeURIComponent(nationalOrder.whatsappUrl)).toContain('Modalidad: Cobro a destino')
+    expect(decodeURIComponent(nationalOrder.whatsappUrl)).toContain('- Cobro: a destino')
 
     const yummy = await app.request('/api/orders/whatsapp', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'yummy-1' }, body: JSON.stringify({ lines: [{ productId: 'orbita-oscura', quantity: 1 }], currency: 'USD', shipping: { method: 'YUMMY', addressText: 'Av. Bella Vista, Maracaibo', quoteReference: 'quote-42' } }) })
     expect(yummy.status).toBe(200)
     const yummyOrder = (await yummy.json() as { data: { shipping?: Record<string, unknown>; quote: { totalCents: number }; whatsappUrl: string } }).data
     expect(yummyOrder.shipping).toMatchObject({ method: 'YUMMY', quoteExternalId: 'quote-42' })
     expect(yummyOrder.quote.totalCents).toBe(nationalOrder.quote.totalCents)
-    expect(decodeURIComponent(yummyOrder.whatsappUrl)).toContain('Costo del delivery: por confirmar')
-    expect(decodeURIComponent(yummyOrder.whatsappUrl)).toContain('puede variar según la hora y disponibilidad')
+    expect(decodeURIComponent(yummyOrder.whatsappUrl)).toContain('📝 *NOTAS*')
+    expect(decodeURIComponent(yummyOrder.whatsappUrl)).toContain('Envía tu ubicación por WhatsApp para cotizar el delivery.')
+    expect(decodeURIComponent(yummyOrder.whatsappUrl)).toContain('La tarifa de Yummy puede variar según la hora y disponibilidad')
+    expect(decodeURIComponent(yummyOrder.whatsappUrl)).not.toContain('Costo del delivery: por confirmar')
+  })
+
+  it('accepts a new National order with carrier only and coordinates destination in WhatsApp', async () => {
+    const response = await app.request('/api/orders/whatsapp', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'national-carrier-only-1' }, body: JSON.stringify({ lines: [{ productId: 'orbita-oscura', quantity: 1 }], currency: 'USD', shipping: { method: 'NATIONAL', carrier: 'MRW' } }) })
+    expect(response.status).toBe(200)
+    const order = (await response.json() as { data: { shipping?: Record<string, unknown>; whatsappUrl: string } }).data
+    expect(order.shipping).toMatchObject({ method: 'NATIONAL', carrier: 'MRW' })
+    expect(order.shipping).not.toHaveProperty('state')
+    expect(order.shipping).not.toHaveProperty('city')
+    const whatsapp = decodeURIComponent(order.whatsappUrl)
+    expect(whatsapp).toContain('Entrega: Envío nacional · MRW')
+    expect(whatsapp).toContain('Datos del destinatario y oficina: por coordinar por WhatsApp')
+    expect(whatsapp).toContain('- Cobro: a destino')
   })
 
   it('keeps a verified Yummy quote server-owned and referential', async () => {
@@ -76,12 +91,14 @@ describe('shipping and delivery points', () => {
       expect(orderResponse.status).toBe(200)
       const order = (await orderResponse.json() as { data: { shipping?: Record<string, unknown>; whatsappUrl: string } }).data
       expect(order.shipping).toMatchObject({ quoteExternalId: 'provider-quote-1', quoteAmountMinor: 375, quoteCurrency: 'Bs', quoteQuotedAt: '2026-09-18T12:00:00.000Z' })
-      expect(decodeURIComponent(order.whatsappUrl)).toContain('Delivery estimado al generar el pedido: Bs 3.75')
+      expect(decodeURIComponent(order.whatsappUrl)).toContain('📝 *NOTAS*')
+      expect(decodeURIComponent(order.whatsappUrl)).not.toContain('Delivery estimado al generar el pedido: Bs 3.75')
       const staleResponse = await app.request('/api/orders/whatsapp', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'yummy-verified-stale' }, body: JSON.stringify({ lines: [{ productId: 'orbita-oscura', quantity: 1 }], currency: 'USD', shipping: { method: 'YUMMY', addressText: 'Calle 72, Maracaibo', quoteReference: 'provider-quote-1' } }) })
       expect(staleResponse.status).toBe(200)
       const stale = (await staleResponse.json() as { data: { shipping?: Record<string, unknown>; whatsappUrl: string } }).data
       expect(stale.shipping).not.toHaveProperty('quoteAmountMinor')
-      expect(decodeURIComponent(stale.whatsappUrl)).toContain('Costo del delivery: por confirmar')
+      expect(decodeURIComponent(stale.whatsappUrl)).toContain('Envía tu ubicación por WhatsApp para cotizar el delivery.')
+      expect(decodeURIComponent(stale.whatsappUrl)).not.toContain('Costo del delivery: por confirmar')
     } finally { vi.unstubAllGlobals() }
   })
 })

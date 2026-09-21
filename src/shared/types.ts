@@ -23,7 +23,7 @@ export type PersonalDeliveryPoint = {
 export type ShippingSelection =
   | { method: 'PERSONAL'; deliveryPointId: string }
   | { method: 'YUMMY'; addressText: string; latitude?: number; longitude?: number; quoteReference?: string }
-  | { method: 'NATIONAL'; carrier: NationalCarrier; state: string; city: string; officeText?: string }
+  | { method: 'NATIONAL'; carrier: NationalCarrier; state?: string; city?: string; officeText?: string }
 
 export type ShippingSnapshot = ShippingSelection & {
   deliveryPointName?: string
@@ -107,6 +107,8 @@ export type Product = {
   leadTime?: string
   /** Public proxy URL is present only when an approved R2 variant exists. */
   imageUrl?: string
+  /** Ordered public image URLs; the first one is the product's primary image. */
+  imageUrls?: string[]
 }
 
 export type CartLine = {

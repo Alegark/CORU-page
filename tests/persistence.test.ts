@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SqlClient, SqlResult, SqlValue } from '../src/db/client'
-import { confirmPersistedOrder, findActivePromotion, hydrateCatalogFromDatabase, hydrateStateFromDatabase, persistPendingOrder } from '../src/worker/persistence'
+import { confirmPersistedOrder, findActivePromotion, hydrateCatalogFromDatabase, hydrateStateFromDatabase, persistPendingOrder, purgePersistedAnalyticsBefore } from '../src/worker/persistence'
 import { resetState, state } from '../src/worker/state'
 import type { Order } from '../src/shared/types'
 
@@ -98,5 +98,19 @@ describe('Turso persistence bridge', () => {
     expect(calls.filter((call) => call.sql.startsWith('UPDATE orders')).length).toBe(1)
     expect(calls.some((call) => call.sql.startsWith('UPDATE products') && call.sql.includes("o.confirmed_at = ?"))).toBe(true)
     expect(calls.some((call) => call.sql.startsWith('INSERT INTO inventory_movements') && call.sql.includes('order_id'))).toBe(true)
+  })
+
+  it('deletes only analytics events before the requested cutoff', async () => {
+    const calls: Array<{ sql: string; args: SqlValue[] }> = []
+    const db: SqlClient = {
+      execute: async <Row extends Record<string, unknown> = Record<string, unknown>>(sql: string, args: SqlValue[] = []) => {
+        calls.push({ sql, args })
+        return { rows: [], rowsAffected: 4 } as SqlResult<Row>
+      },
+      transaction: async <T>(callback: (tx: SqlClient) => Promise<T>) => callback(db),
+    }
+
+    await expect(purgePersistedAnalyticsBefore(db, '2026-09-20T04:00:00.000Z')).resolves.toBe(4)
+    expect(calls).toEqual([{ sql: 'DELETE FROM analytics_events WHERE occurred_at < ?', args: ['2026-09-20T04:00:00.000Z'] }])
   })
 })

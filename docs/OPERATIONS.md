@@ -11,7 +11,6 @@ Configuración del servidor (nunca se incluye en el bundle del navegador):
 ```text
 TURSO_DATABASE_URL (`libsql://coru-production-alegark.aws-us-east-1.turso.io` en producción)
 TURSO_AUTH_TOKEN (secret de Wrangler)
-PHOTOROOM_API_KEY (secret)
 TEAM_DOMAIN (`https://publiex.cloudflareaccess.com` en producción)
 POLICY_AUD (audience tag de la aplicación `CORU Admin`)
 YUMMY_ADAPTER_ENABLED (`false` hasta validar el contrato oficial)
@@ -21,9 +20,9 @@ EXCHANGE_RATE_URL (endpoint JSON server-side de solo lectura para la cotización
 ```
 
 En la publicación actual están configurados `TURSO_AUTH_TOKEN` y
-`EXCHANGE_RATE_URL`. Añade `PHOTOROOM_API_KEY` cuando quieras activar el
-procesamiento automático de fondos; sin ella, el original subido sigue
-disponible para aprobación manual.
+`EXCHANGE_RATE_URL`. Las imágenes se almacenan como originales, sin quitar
+fondos ni aplicar un procesamiento automático. El panel recomienda 1200 × 1200
+px y permite reordenar la galería; el primer elemento es la imagen principal.
 
 `EXCHANGE_RATE_URL` puede apuntar a un endpoint JSON server-side controlado por
 el operador. En producción apunta al relay de solo lectura que devuelve la
@@ -34,14 +33,15 @@ observación válida; si no existe una observación válida disponible, la API
 marca Bs como no disponible en vez de mostrar la tasa bootstrap.
 
 Yummy permanece en modo no bloqueante mientras no exista un contrato oficial
-vigente: el carrito permite continuar por WhatsApp y muestra `Costo de delivery
-a confirmar por WhatsApp.`. Para activar una cotización real, Yummy debe
-entregar por escrito el endpoint, autenticación, payload de origen/destino,
-moneda, identificador de cotización, validez, errores y límites. Después de
-validarlo, se cargan `YUMMY_API_URL` y `YUMMY_API_TOKEN` como configuración del
-Worker, se prueba primero en un entorno separado y solo entonces se cambia
-`YUMMY_ADAPTER_ENABLED=true`. No se debe adivinar una URL, raspar la aplicación
-ni guardar el token en el navegador.
+vigente: el panel solo solicita la dirección y recuerda enviar la ubicación por
+WhatsApp para cotizar manualmente; el carrito permite continuar por WhatsApp.
+Para activar una cotización real, Yummy debe entregar por escrito el endpoint,
+autenticación, payload de origen/destino, moneda, identificador de cotización,
+validez, errores y límites. Después de validarlo, se cargan `YUMMY_API_URL` y
+`YUMMY_API_TOKEN` como configuración del Worker, se prueba primero en un
+entorno separado y solo entonces se cambia `YUMMY_ADAPTER_ENABLED=true`. No se
+debe adivinar una URL, raspar la aplicación ni guardar el token en el
+navegador.
 
 Bindings y contexto:
 
@@ -96,7 +96,7 @@ pnpm smoke:production
 Puede recibir otro origen con `CORU_SMOKE_URL`; no envía pedidos ni datos de
 catálogo y solo comprueba health, catálogo y el guard administrativo.
 
-La versión actual (`3e2a134c-9727-4eb3-9902-3e82c96f5f81`, 18-09-2026) está publicada en producción como `coru` con el dominio personalizado `https://coru.systems/` (el enlace provisional `workers.dev` está desactivado). Incluye el `panel reveal` del carrito para entrada/salida del bottom sheet móvil y drawer de escritorio, el botón visible `Cerrar sesión` del panel administrativo enlazado a Cloudflare Access, el favicon SVG de la mascota CORU, las estadísticas de tráfico anónimo, la aclaración visible de que la tarifa Yummy depende de la tarifa vigente y puede variar por hora/disponibilidad y los accesos reorganizados de guía de tallas y privacidad. La API pública de tasa ya obtiene la observación C2C de Binance mediante el relay configurado; en la verificación del 18-09-2026 devolvió `950.00 Bs/USDT` (el valor cambia con el mercado). Name.com guarda únicamente `jacqueline.ns.cloudflare.com` y `troy.ns.cloudflare.com`; los resolvers públicos delegan en Cloudflare.
+La versión actual (`f332298f-ae28-4b6f-8522-0ce5ebcb8daf`, 19-09-2026) está publicada en producción como `coru` con el dominio personalizado `https://coru.systems/` (el enlace provisional `workers.dev` está desactivado). Incluye el `panel reveal` del carrito para entrada/salida del bottom sheet móvil y drawer de escritorio, miniaturas del carrito ampliadas para escritorio y móvil, el selector inline de entrega sin modalidad preseleccionada, Personal con un desplegable compacto tematizado para los tres puntos sin controles nativos del navegador que se superpone al resumen sin aumentar la hoja, `Envío nacional` con dos botones pequeños MRW/ZOOM, Yummy como selección directa sin desplegar contenido y el gesto táctil de arrastre hacia abajo para cerrar el carrito en móvil. Cada línea del carrito usa ahora una papelera compacta con estado hover/foco para quitarla sin texto suelto. El encabezado muestra únicamente `Carrito`, sin contador ni el texto `Tu selección`. El CTA de WhatsApp queda bloqueado hasta escoger una modalidad y muestra un aviso breve si se pulsa antes. La portada usa el encabezado compacto `Arma tu combo` en una sola línea móvil con `Anillos y accesorios para combinar`, un banner negro rectangular y compacto de 176 px en móvil con mensaje, progreso y CTA en columnas, y chips derivados únicamente de las categorías activas del catálogo que tienen productos públicos; las cards mantienen imagen protagonista, precios Bs sin salto y botón `+` negro con cruz verde. En `/admin/categorias`, las categorías vacías muestran una papelera de eliminación junto al editor sin desplazar la fila y el endpoint las elimina de forma permanente cuando no tienen referencias. También conserva el detalle de producto alineado arriba en escritorio, los enlaces públicos de guía de tallas y privacidad, el middleware administrativo limitado a `/api/admin/*`, el botón visible `Cerrar sesión` del panel administrativo enlazado a Cloudflare Access, el favicon SVG de la mascota CORU, las estadísticas de tráfico anónimo y la aclaración visible de que la tarifa Yummy depende de la tarifa vigente y puede variar por hora/disponibilidad. La API pública de tasa ya obtiene la observación C2C de Binance mediante el relay configurado; el valor cambia con el mercado. Name.com guarda únicamente `jacqueline.ns.cloudflare.com` y `troy.ns.cloudflare.com`; los resolvers públicos delegan en Cloudflare.
 El smoke posterior a la migración confirma `/api/health` 200, `/api/catalog`
 200 y `/api/admin/products` 302 hacia el login de Cloudflare Access. El
 storefront vuelve a mostrar su estado vacío normal (sin error de persistencia).
@@ -110,7 +110,23 @@ Cloudflare ya fue verificado; antes de aceptar tráfico comercial hay que cargar
 el catálogo real y completar el smoke de mutaciones administrativas.
 
 La analítica pública es anónima y se conserva durante 180 días. Cada carga del
-catálogo envía `catalog_view` de forma no bloqueante; el panel Analítica muestra
-visitas, sesiones y páginas por sesión desde `/api/admin/analytics/traffic`.
-El identificador de sesión es aleatorio y temporal; no se persisten IP, correo,
+catálogo envía `catalog_view` de forma no bloqueante; el panel Analítica separa
+`Visitantes únicos` (un identificador persistente una vez por período) de
+`Visitas totales` (cada entrada al catálogo). Las vistas de producto se usan
+solo para interés por producto, no para inflar la visita general. Los registros
+sin identificador no cuentan como visitantes únicos. No se persisten IP, correo,
 teléfono ni contenido de mensajes.
+
+## Última publicación — 19-09-2026
+
+- Worker `coru` versión `3aa7aa27-93c0-4533-afb4-15b36a43f817` publicada en `https://coru.systems/`, sustituyendo la versión anterior.
+- Incluye la guía de tallas actualizada en `/guia-de-tallas`, el hero `coru-ring-hero.png`, la ilustración del método 2 `coru-medir-dedo.svg` y la nueva ilustración del método 1 `coru-medir-anillo.png`.
+- Prepublicación: `tests/size-guide.test.tsx` (3/3), `pnpm typecheck`, `pnpm build` y `pnpm exec wrangler deploy --dry-run` PASS.
+- Smoke posterior: `/api/health` 200, `/api/catalog` 200, guard administrativo 302; la ruta pública y `coru-medir-anillo.png` respondieron 200.
+
+## Última publicación — 21-09-2026
+
+- Worker `coru` versión `51cb5ec7-7df9-4e41-a2f0-46fd6ea50f77` publicada en `https://coru.systems/`.
+- La tarjeta duplicada de dispositivos fue reemplazada por `Visitas totales`, calculada únicamente con eventos `catalog_view`.
+- Se ejecutó la limpieza única de `analytics_events` anterior a `2026-09-20T04:00:00.000Z` (Caracas); el binding temporal `ANALYTICS_PURGE_BEFORE` ya no está configurado.
+- Verificación posterior: `pnpm test` (116/116), `pnpm typecheck`, `pnpm build`, `pnpm worker:dry-run`, health 200, catálogo 200 y guard administrativo 302.

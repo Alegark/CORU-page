@@ -4,6 +4,8 @@ const CART_KEY = 'coru_cart_v1'
 const CURRENCY_KEY = 'coru_currency_v1'
 const PRIVACY_KEY = 'coru_privacy_notice_v1'
 const SESSION_KEY = 'coru_session_v1'
+const VISITOR_KEY = 'coru_visitor_v1'
+const VISITOR_COOKIE = 'coru_visitor_v1'
 const SOURCE_KEY = 'coru_source_v1'
 const ORDERS_KEY = 'coru_orders_v1'
 
@@ -22,6 +24,20 @@ function readJson<T>(storage: Storage, key: string, fallback: T): T {
 function randomId(prefix: string): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+let fallbackVisitorId: string | undefined
+
+function readVisitorCookie(): string | undefined {
+  if (typeof document === 'undefined') return undefined
+  const match = document.cookie.split(';').map((part) => part.trim()).find((part) => part.startsWith(VISITOR_COOKIE + '='))
+  const value = match?.slice(VISITOR_COOKIE.length + 1)
+  return value ? decodeURIComponent(value) : undefined
+}
+
+function writeVisitorCookie(id: string): void {
+  if (typeof document === 'undefined') return
+  document.cookie = `${VISITOR_COOKIE}=${encodeURIComponent(id)}; Max-Age=31536000; Path=/; SameSite=Lax`
 }
 
 export function loadCart(storage: Storage = window.localStorage): CartLine[] {
@@ -59,15 +75,46 @@ export function getSessionId(storage: Storage = window.sessionStorage): string {
   return id
 }
 
+/**
+ * Anonymous browser-profile identifier used only to deduplicate catalog visits.
+ * It is intentionally separate from the short-lived session identifier.
+ */
+export function getVisitorId(storage?: Storage): string {
+  try {
+    const candidate = storage ?? window.localStorage
+    let id = readJson<string>(candidate, VISITOR_KEY, '')
+    if (!id) {
+      id = randomId('visitor')
+      candidate.setItem(VISITOR_KEY, JSON.stringify(id))
+    }
+    return id
+  } catch {
+    const cookieId = readVisitorCookie()
+    if (cookieId) return cookieId
+    fallbackVisitorId ??= randomId('visitor')
+    writeVisitorCookie(fallbackVisitorId)
+    return fallbackVisitorId
+  }
+}
+
 export function getSource(storage: Storage = window.sessionStorage): string {
   const params = new URLSearchParams(window.location.search)
-  const source = params.get('utm_source')?.trim().toLowerCase()
+  const source = params.get('src')?.trim().toLowerCase() || params.get('utm_source')?.trim().toLowerCase()
   if (source) {
-    const normalized = source.slice(0, 40)
+    const normalized = normalizeSource(source)
     storage.setItem(SOURCE_KEY, JSON.stringify(normalized))
     return normalized
   }
-  return readJson<string>(storage, SOURCE_KEY, 'directo')
+  return normalizeSource(readJson<string>(storage, SOURCE_KEY, 'direct'))
+}
+
+function normalizeSource(value: unknown): string {
+  const source = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  if (source === 'instagram' || source === 'ig') return 'instagram'
+  if (source === 'facebook' || source === 'fb') return 'facebook'
+  if (source === 'whatsapp' || source === 'wa') return 'whatsapp'
+  if (!source || source === 'direct' || source === 'directo') return 'direct'
+  return 'other'
 }
 
 export function loadOrders(storage: Storage = window.localStorage): Order[] {
