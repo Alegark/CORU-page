@@ -1,9 +1,18 @@
-import type { ProductArtwork } from '../../../shared/types'
+import type { ProductArtwork, ProductImageSource } from '../../../shared/types'
+import { productImageAlt } from '../../../shared/seo'
 
-export function RingArtwork({ artwork, label, large = false, imageUrl }: { artwork: ProductArtwork; label: string; large?: boolean; imageUrl?: string }) {
-  if (imageUrl) return <img className={`ring-image${large ? ' ring-image-large' : ''}`} src={imageUrl} alt={`Imagen de ${label}`} loading="lazy" />
+export function RingArtwork({ artwork, label, large = false, imageUrl, imageSource, priority = false, material, description }: { artwork: ProductArtwork; label: string; large?: boolean; imageUrl?: string; imageSource?: ProductImageSource; priority?: boolean; material?: string; description?: string }) {
+  const alt = productImageAlt(label, material, description)
+  const fallback = imageSource?.src ?? imageUrl
+  if (fallback) {
+    const src = large ? imageSource?.detail1200 ?? fallback : imageSource?.thumb640 ?? imageSource?.thumb320 ?? fallback
+    const srcSet = large
+      ? [[imageSource?.thumb640, '640w'], [imageSource?.detail1200, '1200w']].filter((entry): entry is [string, string] => Boolean(entry[0])).map(([url, width]) => `${url} ${width}`).join(', ')
+      : [[imageSource?.thumb320, '320w'], [imageSource?.thumb640, '640w']].filter((entry): entry is [string, string] => Boolean(entry[0])).map(([url, width]) => `${url} ${width}`).join(', ')
+    return <img className={`ring-image${large ? ' ring-image-large' : ''}`} src={src} {...(srcSet ? { srcSet } : {})} sizes={large ? '(max-width: 767px) 100vw, 55vw' : '(max-width: 639px) 50vw, (max-width: 1023px) 33vw, 25vw'} alt={alt} loading={priority ? 'eager' : 'lazy'} {...{ fetchpriority: priority ? 'high' : 'low' }} decoding="async" />
+  }
   return (
-    <svg className={`ring-art${large ? ' ring-art-large' : ''}`} viewBox="0 0 260 220" role="img" aria-label={`Imagen de ${label}`}>
+    <svg className={`ring-art${large ? ' ring-art-large' : ''}`} viewBox="0 0 260 220" role="img" aria-label={alt}>
       <defs>
         <linearGradient id={`ring-sheen-${artwork}`} x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stopColor="#ffffff" stopOpacity="0.95" />

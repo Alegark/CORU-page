@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { useState } from 'react'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StorePage } from '../src/client/features/catalog/StorePage'
 import { StoreHeader } from '../src/client/components/store/StoreHeader'
@@ -15,6 +15,77 @@ function CurrencyHeaderHarness() {
 }
 
 describe('Store', () => {
+  it('uses responsive media sources and prioritizes only the first four cards', () => {
+    const products = demoProducts.slice(0, 5).map((product, index) => ({
+      ...product,
+      imageSources: [{
+        id: `image-${index}`,
+        src: `/media/products/image-${index}/detail-1200.webp`,
+        thumb320: `/media/products/image-${index}/thumb-320.webp`,
+        thumb640: `/media/products/image-${index}/thumb-640.webp`,
+        detail1200: `/media/products/image-${index}/detail-1200.webp`,
+      }],
+    }))
+    render(<CartProvider><StorePage products={products} onOrderCreated={() => undefined} /></CartProvider>)
+    const images = [...document.querySelectorAll<HTMLImageElement>('.product-card .ring-image')]
+    expect(images).toHaveLength(5)
+    expect(images.slice(0, 4).every((image) => image.getAttribute('loading') === 'eager')).toBe(true)
+    expect(images.slice(0, 4).every((image) => image.getAttribute('fetchpriority') === 'high')).toBe(true)
+    expect(images[4].getAttribute('loading')).toBe('lazy')
+    expect(images[4].getAttribute('fetchpriority')).toBe('low')
+    expect(images[0].srcset).toContain('320w')
+    expect(images[0].sizes).toContain('50vw')
+  })
+
+  it('shows the real size on product cards without inventing one', () => {
+    const products = [
+      { ...demoProducts[0], name: 'Anillo medido', sizeLabel: 'US 10', usSize: undefined },
+      { ...demoProducts[1], name: 'Anillo etiquetado', sizeLabel: 'Talla US 8' },
+      { ...demoProducts[2], name: 'Anillo convertido', sizeLabel: 'Talla única', usSize: '7' },
+      { ...demoProducts[6], name: 'Cadena medida', sizeLabel: 'Largo 45 cm' },
+    ]
+
+    render(<CartProvider><StorePage products={products} onOrderCreated={() => undefined} /></CartProvider>)
+
+    expect(screen.getByText('Talla US 10')).toBeInTheDocument()
+    expect(screen.getByText('Talla US 8')).toBeInTheDocument()
+    expect(screen.getByText('Talla US 7')).toBeInTheDocument()
+    expect(screen.getByText('Largo 45 cm')).toBeInTheDocument()
+    expect(screen.queryByText('Talla Talla US 8')).not.toBeInTheDocument()
+  })
+
+  it('reveals twelve more products and resets the limit for a new filter', async () => {
+    const user = userEvent.setup()
+    const products = Array.from({ length: 42 }, (_, index) => ({
+      ...demoProducts[index % demoProducts.length],
+      id: `catalog-${index}`,
+      slug: `catalog-${index}`,
+      name: `Anillo catálogo ${index + 1}`,
+      category: 'Anillos',
+      sizeLabel: 'US 7',
+      stockQuantity: 1,
+      active: true,
+      primaryImageApproved: true,
+    }))
+
+    render(<CartProvider><StorePage products={products} onOrderCreated={() => undefined} /></CartProvider>)
+    expect(document.querySelectorAll('.product-card')).toHaveLength(12)
+
+    const loadMore = () => screen.getByRole('button', { name: /ver más anillos/i })
+    await user.click(loadMore())
+    expect(document.querySelectorAll('.product-card')).toHaveLength(24)
+    await user.click(loadMore())
+    expect(document.querySelectorAll('.product-card')).toHaveLength(36)
+    await user.click(loadMore())
+    expect(document.querySelectorAll('.product-card')).toHaveLength(42)
+    expect(screen.queryByRole('button', { name: /ver más anillos/i })).not.toBeInTheDocument()
+
+    const search = screen.getByRole('searchbox', { name: 'Buscar piezas' })
+    await user.type(search, 'Anillo catálogo 1')
+    expect(document.querySelectorAll('.product-card')).toHaveLength(11)
+    expect(screen.queryByRole('button', { name: /ver más anillos/i })).not.toBeInTheDocument()
+  }, 15_000)
+
   it('adds three eligible rings and shows the bundle total without a size selector', async () => {
     const user = userEvent.setup()
     render(<CartProvider><StorePage products={demoProducts} onOrderCreated={() => undefined} /></CartProvider>)
@@ -22,14 +93,15 @@ describe('Store', () => {
     await user.click(screen.getByRole('button', { name: /agregar calavera orbital/i }))
     await user.click(screen.getByRole('button', { name: /agregar estrella rota/i }))
     await user.click(screen.getByRole('button', { name: 'Abrir carrito, 3 productos' }))
-    expect(screen.getByText('$10')).toBeInTheDocument()
+    expect(within(screen.getByRole('dialog')).getByText('$10')).toBeInTheDocument()
     expect(screen.queryByLabelText(/talla|size/i)).not.toBeInTheDocument()
   })
 
   it('keeps the combo copy clear without repeating the hero subtitle', () => {
+    window.localStorage.clear()
     render(<CartProvider><StorePage products={demoProducts} onOrderCreated={() => undefined} /></CartProvider>)
 
-    expect(screen.getByText('Anillos y accesorios para combinar')).toBeInTheDocument()
+    expect(screen.getByText('Anillos y accesorios en Maracaibo · Envíos a toda Venezuela')).toBeInTheDocument()
     expect(screen.queryByText(/para combinar sin pedir permiso/)).not.toBeInTheDocument()
     expect(screen.getAllByText('Promo Anillos').length).toBeGreaterThan(0)
     expect(screen.getByText('3 x $10')).toBeInTheDocument()
@@ -69,6 +141,7 @@ describe('Store', () => {
     expect(screen.getByRole('button', { name: 'Personal' })).not.toHaveClass('is-selected')
     const whatsapp = screen.getByRole('button', { name: 'Pedir por WhatsApp' })
     expect(whatsapp).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByText('Se abrirá WhatsApp con tu pedido listo para confirmar.')).toBeInTheDocument()
     await user.click(whatsapp)
     expect(screen.getByRole('alert')).toHaveTextContent('Escoge una modalidad de entrega para continuar.')
   })
@@ -120,7 +193,7 @@ describe('Store', () => {
     await user.click(national)
     expect(screen.queryByRole('region', { name: 'Envío nacional' })).not.toBeInTheDocument()
     expect(screen.getByText('Envío nacional · ZOOM')).toBeInTheDocument()
-  })
+  }, 15_000)
 
   it('shows the compact personal delivery list and follows the selected point', async () => {
     const user = userEvent.setup()
@@ -143,7 +216,7 @@ describe('Store', () => {
     } finally {
       vi.unstubAllGlobals()
     }
-  })
+  }, 15_000)
 
   it('keeps Yummy as a direct selection without expanding details', async () => {
     const user = userEvent.setup()

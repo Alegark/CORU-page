@@ -1,6 +1,7 @@
 import { convertUsdCentsToBs, quoteCart, type PromotionRule } from '../../shared/commerce'
 import type { CartLine, Currency, CommerceQuote, FulfillmentType, Order, OrderPayment, PaymentKind, ShippingSelection, ShippingSnapshot } from '../../shared/types'
 import { formatWhatsappOrderMessage } from '../../shared/whatsapp'
+import { formatProductSizeLabel } from '../../shared/ring-size'
 import type { CoruState } from '../state'
 import { consumeForOrder, InventoryServiceError, reverseSaleForOrder } from './inventory.service'
 import { endOfCaracasDay, getUsableRate, ExchangeRateError } from './exchange-rate.service'
@@ -92,6 +93,13 @@ function usablePayment(state: CoruState, currency: Currency, requestedRateMicros
 
 type SelectedProduct = { line: CartLine; product: NonNullable<CoruState['products'][number]> }
 
+function hasPublishedPreorderDetails(product: NonNullable<CoruState['products'][number]>): boolean {
+  const information = product.sizeLabel.trim().toLocaleLowerCase()
+  const hasInformation = information.length > 0 && information !== 'talla única' && information !== 'talla unica'
+  const hasStructuredMeasurement = Boolean(product.usSize || product.innerDiameterMm !== undefined || product.circumferenceMm !== undefined)
+  return Boolean(product.measurementsText?.trim() || hasInformation || hasStructuredMeasurement)
+}
+
 /** Pure order-intent validation used before anti-abuse reservation. */
 export function validateOrderIntent(state: CoruState, lines: CartLine[], shipping?: ShippingSelection | null): { normalized: CartLine[]; selected: SelectedProduct[]; fulfillmentType: FulfillmentType } {
   if (!state.settings.storeActive) throw new OrderServiceError('STORE_INACTIVE', 'La tienda no está recibiendo pedidos en este momento.')
@@ -105,7 +113,7 @@ export function validateOrderIntent(state: CoruState, lines: CartLine[], shippin
   if (fulfillmentTypes.size > 1) throw new OrderServiceError('MIXED_FULFILLMENT', 'Separa los productos disponibles y los productos bajo pedido para crear pedidos independientes.')
   const fulfillmentType = [...fulfillmentTypes][0]
   if (fulfillmentType === 'STOCK' && selected.some(({ line, product }) => product.stockQuantity < line.quantity)) throw new OrderServiceError('PRODUCT_UNAVAILABLE', 'Uno o más productos ya no están disponibles.')
-  if (fulfillmentType === 'PREORDER' && selected.some(({ product }) => !product.material || !product.sizeLabel || !product.measurementsText)) throw new OrderServiceError('PRODUCT_UNAVAILABLE', 'Este producto bajo pedido aún no tiene medidas publicadas.')
+  if (fulfillmentType === 'PREORDER' && selected.some(({ product }) => !product.material || !product.sizeLabel || !hasPublishedPreorderDetails(product))) throw new OrderServiceError('PRODUCT_UNAVAILABLE', 'Este producto bajo pedido aún no tiene información de medidas publicada.')
   if (fulfillmentType === 'PREORDER' && shipping) throw new OrderServiceError('FULFILLMENT_CHANGED', 'Los productos bajo pedido no usan entrega en este paso.')
   return { normalized, selected, fulfillmentType }
 }
@@ -124,7 +132,7 @@ export function createPendingOrder(state: CoruState, lines: CartLine[], currency
       : state.promotions?.find((candidate) => candidate.active && (!candidate.startsAt || now >= new Date(candidate.startsAt)) && (!candidate.endsAt || now <= new Date(candidate.endsAt)))
     : null
   const quote = quoteCart(normalized, state.products, promotion)
-  const orderItems = selected.map(({ line, product }) => ({ ...line, name: product.name, sizeLabel: product.sizeLabel, unitPriceCents: product.priceCents, lineTotalCents: product.priceCents * line.quantity, material: product.material, fulfillmentTypeSnapshot: fulfillmentOf(product) }))
+  const orderItems = selected.map(({ line, product }) => ({ ...line, name: product.name, sizeLabel: formatProductSizeLabel(product, product.sizeLabel), unitPriceCents: product.priceCents, lineTotalCents: product.priceCents * line.quantity, material: product.material, fulfillmentTypeSnapshot: fulfillmentOf(product) }))
   const reference = nextReference(state.orders)
   const expiresAt = new Date(now.getTime() + ORDER_TTL_MS).toISOString()
   const depositUsdCents = fulfillmentType === 'PREORDER' ? Math.floor(quote.totalCents / 2) : undefined

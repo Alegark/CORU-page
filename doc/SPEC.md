@@ -36,7 +36,7 @@ CORU v1.1 ! preservar tienda/admin v1 + añadir productos PREORDER, entrega STOC
 - C30: order snapshots ! nombre/SKU/talla/precio/promoción/totales; cambios futuros de producto ⊥ alteran históricos.
 - C31: base order statuses = `PENDING|CONFIRMED|DISCARDED|CANCELLED`; rate expiry = estado derivado, no order status; PREORDER añade etapa operativa + estado de pago separados según I149.
 - C32: edición de pedido pendiente ∉ v1. Si venta real difiere antes de concretarse → descartar intención y generar nueva intención; venta ya CONFIRMED → `cancel-sale`, ⊥ DISCARDED.
-- C33: cart ! `localStorage` versionado; currency preference ! `localStorage`; session analytics ! `sessionStorage`.
+- C33: [AMEND 2026-09-24] cart ! `localStorage` versionado; currency preference ! `localStorage`; analytics session id ! `localStorage` key `coru_session_v2` with 30-min inactivity timeout + event marker `sessionModel: idle30-v1` (supersedes sessionStorage session).
 - C34: promo engine ! server authority; client replica solo preview.
 - C35: promo initial ! `BUNDLE_FIXED_PRICE`: category Anillos, qty=3, bundle=1000 cents, mixed=true, repeatable=true.
 - C36: promo examples ! 1=$4,2=$8,3=$10,4=$14,5=$18,6=$20 cuando unit price=$4.
@@ -56,8 +56,8 @@ CORU v1.1 ! preservar tienda/admin v1 + añadir productos PREORDER, entrega STOC
 - C50: icons ! one family = Font Awesome Free packages; ⊥ CDN dependency in production.
 - C51: accessibility ! focus visible, keyboard operable, semantic labels, target ≥44px, AA reasonable, reduced motion.
 - C52: analytics ! anonymous; ⊥ name/email/phone/message content/IP persistence as business analytics data.
-- C53: analytics session id ! random UUID/sessionStorage; source normalized from `src|utm_source`: instagram|facebook|whatsapp|direct|other.
-- C54: event retention v1 = 180 days; cleanup scheduled daily.
+- C53: [AMEND 2026-09-24] analytics session id ! random UUID in `localStorage` `coru_session_v2` (30-min idle); anonymous visitor id ! `coru_visitor_v1` (`localStorage` + first-party cookie, 1 year) used only for unique-visitor counting; source normalized from `src|utm_source`: instagram|facebook|whatsapp|direct|other.
+- C54: [AMEND 2026-09-24] event retention v1 = 180 days; cleanup ! runs on each cron tick (`*/10`, I64), idempotent delete of events older than 180 days; ⊥ orders.
 - C55: events ! `catalog_view,product_view,add_to_cart,remove_from_cart,promotion_view,promotion_started,promotion_completed,cart_open,order_intent_created,whatsapp_checkout`.
 - C56: confirmed/discarded outcomes ! derive from orders, not anonymous event claims.
 - C57: privacy notice ! compact informational first-party notice; no blocking consent because v1 ⊥ third-party analytics/ads cookies.
@@ -69,7 +69,7 @@ CORU v1.1 ! preservar tienda/admin v1 + añadir productos PREORDER, entrega STOC
 - C63: TypeScript `strict=true`; ⊥ `any` unless isolated adapter with comment.
 - C64: pnpm ! package manager.
 - C65: server state frontend ! TanStack Query; forms admin ! React Hook Form + Zod resolver; routing ! React Router.
-- C66: tests ! Vitest + Testing Library + Playwright; commerce/rate/order/inventory core ! unit/integration coverage before UI happy-path completion.
+- C66: tests ! Vitest + Testing Library; commerce/rate/order/inventory core ! unit/integration coverage before UI happy-path completion. Amended 2026-09-24: Playwright/Chromium browser E2E removed by owner decision; ⊥ browser runner in repo; post-deploy check = `smoke:production` on Cloudflare.
 - C67: rate/image external calls ! timeout + structured error + retry policy; secrets server-only.
 - C68: public mutation endpoints ! rate-limit at Worker/app level; analytics ! batch + payload caps.
 - C69: STOCK shipping recoge solo datos mínimos del método elegido; ⊥ nombre/email/teléfono requeridos por la app; WhatsApp conversation permanece fuera de app.
@@ -135,6 +135,7 @@ CORU v1.1 ! preservar tienda/admin v1 + añadir productos PREORDER, entrega STOC
 - C129: shared frontend ! Store/Admin pueden compartir tokens, UI primitives, tipos y utilidades pequeñas; shared code ⊥ arrastrar pantallas/services/dependencias exclusivas de Admin al public initial dependency graph.
 - C130: public performance ! añadir funcionalidades exclusivamente administrativas ⊥ añadir su código/peso específico a JS/CSS inicial del Store; imágenes de catálogo ! derivados optimizados + lazy loading cuando estén fuera del viewport.
 - C131: production bundle audit ! antes de release inspeccionar output/chunk graph de Vite + requests de red de rutas públicas y registrar tamaños de chunks públicos principales; antes de navegar a `/admin/*` ! cero requests de chunks exclusivos de Admin.
+- C132: [AMEND 2026-09-24] implemented stack ! accepted deviation from C1/C65 pending owner decision: ⊥ Tailwind, React Router, TanStack Query, React Hook Form, Zod, Drizzle ORM runtime; ! custom router, custom shared validation, hand-written libSQL HTTP client, plain CSS tokens. C1/C65 remain historical targets; do not delete.
 
 ## §I INTERFACES
 - I1 page: `/` → public catalog; header→promo→search→category rail→grid→floating cart mobile.
@@ -152,7 +153,7 @@ CORU v1.1 ! preservar tienda/admin v1 + añadir productos PREORDER, entrega STOC
 - I13 page: `/admin/promociones/nueva|:id` → promotion editor + rule preview.
 - I14 page: `/admin/pedidos` → PENDING/CONFIRMED/DISCARDED/CANCELLED list; filters search ref/status/date/fulfillment.
 - I15 page: `/admin/pedidos/:id` → snapshot items/totals/rate validity/timeline/actions.
-- I16 page: `/admin/analitica` → funnel/products/sources/promos/device/orders confirmed.
+- I16: [AMEND 2026-09-24] page: `/admin/analitica` → funnel/products/sources/promos/device/orders confirmed; KPI+timeline `whatsappIntents` ! count order records created in selected range (any status, Caracas day of `createdAt`); funnel `whatsappSessions`/`whatsappPerAddPct` remain event-based; with Turso, admin loads analytics by range (+1-day lookback) via DB, not full in-memory hydrate.
 - I17 page: `/admin/ajustes` → WhatsApp/currency rate automatic|manual/store links/privacy URL.
 - I18 UI: `ProductCard` props `{product,onOpen,onAdd,currency}`; no size selector.
 - I19 UI: `CurrencyToggle` values `USD|VES`; label rendered `USD|Bs`.
@@ -198,9 +199,9 @@ CORU v1.1 ! preservar tienda/admin v1 + añadir productos PREORDER, entrega STOC
 - I59 api admin: `PUT /api/admin/exchange-rate/mode` body automatic|manual + manualRate?; response ⊥ provider name.
 - I60 api: success envelope `{data:T}`; error envelope `{error:{code,message,details?}}`.
 - I61 http: invalid body/query→422; unauth/invalid Access→403; missing→404; conflict→409; throttled→429; external dependency unavailable→503.
-- I62 env required prod: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `R2_* binding`, `TEAM_DOMAIN`, `POLICY_AUD`, `DEVICE_TOKEN_SECRET`, `ABUSE_HMAC_SECRET`, `WHATSAPP_DEFAULT_NUMBER?`.
+- I62: [AMEND 2026-09-24] env required prod: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `R2_* binding`, `TEAM_DOMAIN`, `POLICY_AUD`, `CORU_ABUSE_SECRET` (min 32 chars; HMAC for device cookie + abuse digests), `EXCHANGE_RATE_URL?`, `WHATSAPP_DEFAULT_NUMBER?`. Supersedes prior names `DEVICE_TOKEN_SECRET` / `ABUSE_HMAC_SECRET`. Without `CORU_ABUSE_SECRET` in production → `POST /api/orders/whatsapp` fails closed `503 ORDER_INTENT_GUARD_UNAVAILABLE`.
 - I63 env internal rate adapter needs no API key for public quote endpoint; URL/constants server-only.
-- I64 cron: `*/10 * * * *` rate refresh; `*/15 * * * *` overdue PENDING expiry sweep; action/read paths also enforce exact `expires_at`.
+- I64: [AMEND 2026-09-24] cron: single schedule `*/10 * * * *` (wrangler.jsonc); same tick ! automatic rate refresh (when mode=AUTOMATIC) + overdue PENDING expiry sweep + analytics retention cleanup; action/read paths also enforce exact `expires_at`.
 - I65 cron: daily analytics retention cleanup.
 - I66 file: `src/client/design/tokens.css` = DESIGN token source in code; ⊥ dark tokens.
 - I67 file: `src/db/schema/*` tables separated by domain.
@@ -222,7 +223,7 @@ CORU v1.1 ! preservar tienda/admin v1 + añadir productos PREORDER, entrega STOC
 - I83 internal STOCK: `OrderService.confirm(orderId)` ! transaction.
 - I84 internal STOCK: `InventoryService.adjust/consume`.
 - I85 localStorage: `coru_cart_v1`, `coru_currency_v1`, `coru_privacy_notice_v1`.
-- I86 sessionStorage: `coru_session_v1`, `coru_source_v1`.
+- I86: [AMEND 2026-09-24] localStorage: `coru_session_v2` `{id,lastActivityAt}` (30-min idle) + `coru_visitor_v1`; sessionStorage: `coru_source_v1`; visitor also mirrored as first-party cookie `coru_visitor_v1` Max-Age=31536000. Events carrying a measured session ! `sessionModel: idle30-v1`.
 - I87 public WhatsApp msg STOCK base ! reference/items/promo/USD total; if VES order → Bs total + “Monto válido con la tasa asignada hasta finalizar hoy.” + shipping variant I127-I130; ⊥ provider name.
 - I88 admin order detail ! show USD always; VES fields when order currency VES.
 - I89 format: USD `Intl.NumberFormat`; VES `es-VE`, 2 decimals; no hand-built thousands separators.
@@ -272,7 +273,7 @@ CORU v1.1 ! preservar tienda/admin v1 + añadir productos PREORDER, entrega STOC
 - I133 guide method B: thin paper/non-elastic thread/flexible tape → wrap target finger without overtightening → mark meeting point → lay flat on mm rule → repeat; result approximate circumference mm.
 - I134 guide tips: exact finger; allow knuckle; repeat; inner diameter only; finger size varies slightly by day; ask CORU if product measurement unclear; ⊥ medical claim.
 - I135 guide illustration A: ring+rule+inner-edge arrows+`mm`; illustration B: finger+strip meeting mark+strip on rule+`mm`; alt/title ! describe measurement.
-- I136 analytics events add `size_guide_view,shipping_method_selected,yummy_quote_requested,yummy_quote_succeeded,yummy_quote_failed,preorder_intent_created,preorder_deposit_recorded,preorder_ready,preorder_completed`; product/order events may add allowlisted `fulfillment_type`.
+- I136: [AMEND 2026-09-24] analytics events add `size_guide_view,privacy_view,not_found_view,shipping_method_selected,yummy_quote_requested,yummy_quote_succeeded,yummy_quote_failed,preorder_intent_created,preorder_deposit_recorded,preorder_ready,preorder_completed`; product/order events may add allowlisted `fulfillment_type`.
 - I137 analytics forbidden keys/data add address, coordinates, city, office, personal/payment notes, paid amounts/payment details.
 - I138 UX PREORDER states: created/deposit pending/deposit recorded/in process/ready/balance pending/completed/cancelled.
 - I139 UX shipping states: Yummy idle/loading/quoted/stale/unavailable/error; Personal none/selected/deactivated; National carrier missing/selected; shipping details live in a reversible nested panel.
@@ -281,7 +282,7 @@ CORU v1.1 ! preservar tienda/admin v1 + añadir productos PREORDER, entrega STOC
 - I142 http cookie: `Set-Cookie: coru_device=<opaque-signed-token>; Max-Age=2592000; Path=/; HttpOnly; Secure; SameSite=Lax`; validation/server issuance ! before limiter key derivation.
 - I143 internal: `OrderIntentAbuseGuard.checkAndReserve({deviceDigest,ipDigest,now,idempotencyKey})` → allowed|limited; atomic server counters C121; data TTL C123.
 - I144 order error 429: `{error:{code:"ORDER_INTENT_RATE_LIMITED",message:"Has generado varios pedidos en poco tiempo. Intenta de nuevo en unos minutos.",details:{retryAfterSeconds}}}` + `Retry-After`.
-- I145 expiry: `OrderService.expirePending(now)` + lazy `expireIfDue(order,now)` → `PENDING && expires_at<=now` transitions per I149; scheduled every 15 min, batched/idempotent.
+- I145: [AMEND 2026-09-24] expiry: `OrderService.expirePending(now)` + lazy `expireIfDue(order,now)` → `PENDING && expires_at<=now` transitions per I149; scheduled on every `*/10` cron tick (I64), batched/idempotent; persisted conditionally when Turso is bound.
 - I146 db `order_status_audit`: `id,order_id,from_status,to_status,reason,actor_type:"ADMIN"|"SYSTEM",actor_subject?,idempotency_key?,created_at`; cancellations/discards/expiry ! row.
 - I147 db antiabuse store: ephemeral server counters/events keyed only HMAC digest+window/timestamps; expires ≤24 h; raw device token/IP ⊥ persisted.
 - I148 UI: `OrderExpiryNotice` → due/expired copy; `RateLimitNotice` → message+retry countdown/text, cart preserved; ⊥ auto-retry loop.
@@ -379,7 +380,7 @@ R13|Recovery provenance|downloaded malformed SPEC = 1,055 duplicate R9 records, 
 - V59: order rate refresh ! only PENDING+VES.
 - V60: analytics retention cleanup ! delete events older than 180 days, ⊥ orders.
 - V61: admin dashboard STOCK “ventas/ingresos” ! derive CONFIRMED only; PREORDER cash ! recorded payments only per V105.
-- V62: “WhatsApp intents” ! all PENDING+CONFIRMED+DISCARDED+CANCELLED records; “ventas activas” ! CONFIRMED only; cancelled value/cash reported separately, ⊥ active revenue.
+- V62: [AMEND 2026-09-24] KPI/timeline “WhatsApp intents” (`whatsappIntents`) ! count order records of any status (`PENDING|CONFIRMED|DISCARDED|CANCELLED`) whose `createdAt` falls in the selected range (Caracas day); ⊥ client `order_intent` event count for that KPI; funnel session metrics (`whatsappSessions`, `whatsappPerAddPct`) may remain event-based; “ventas activas” ! CONFIRMED only; cancelled value/cash reported separately, ⊥ active revenue.
 - V63: selected Bs pre-order notice ! appears before CTA; locked notice ! only after intent response.
 - V64: if popup/deep-link fails, order feedback ! expose retry `Abrir WhatsApp`, ⊥ create second order.
 - V65: customer STOCK cart quantity ! cannot exceed latest known stock; PREORDER ignores stock; server remains authority.
@@ -450,41 +451,43 @@ R13|Recovery provenance|downloaded malformed SPEC = 1,055 duplicate R9 records, 
 - V130: navegación directa a `/`, `/producto/:slug` o `/guia-de-tallas` ⊥ solicita chunks exclusivos de Admin antes de navegación a `/admin/*`.
 - V131: dependencia exclusiva de Admin, incl. admin API/data loaders + CSS Admin, ⊥ static import desde Store/public root; ! permanecer detrás del admin lazy boundary.
 - V132: feature únicamente administrativa puede crear/aumentar chunks Admin, pero ⊥ incorporar su código/bytes específicos a public initial chunks.
-- V133: build gate bundle isolation ! `pnpm build` + inspección chunk graph + Playwright/browser network prueban V129-V132; shared tokens/UI primitives permitidos como common chunks.
+- V133: build gate bundle isolation ! `pnpm build` + inspección chunk graph prueban V129-V132; shared tokens/UI primitives permitidos como common chunks. Amended 2026-09-24: browser network check (Playwright) removed with C66; chunk-graph inspection of the build output remains the gate.
+- V134: visitor id (`coru_visitor_v1`) + session id (`coru_session_v2`) ! opaque random identifiers; ⊥ PII (name/email/phone/IP/message); purpose disclosed on `/privacidad`; visitor ! unique-visitor counting only; session ! idle30 analytics only.
+- V135: multi-row DB writes ! atomic conditional Hrana `batch` (BEGIN → statements conditioned on prior ok → COMMIT if all ok else ROLLBACK); admin order transitions ! conditional on persisted status/stage/payment (`UPDATE … WHERE id=? AND status=<expected> […]`); stock changes ! deltas guarded by the same transition marker; stale concurrent write → 409 `ORDER_CONFLICT`; persistence unavailable → 503 `PERSISTENCE_UNAVAILABLE`.
 
 ## §T TASKS
 id|status|task|cites
-T1|.|scaffold React+Vite+CF Worker+Hono+TS strict+pnpm; scripts/env/typegen|C1,C2,C63,C64,R2,R3
-T2|.|install design tokens/assets/components baseline; remove dark mode|C45-C50,V32-V36
-T3|.|define Drizzle schema+migrations+seed + repository boundaries|I68-I78,V3,V49,V52,V53
-T4|.|build API foundation: Hono groups/Zod/error envelope/server abuse guard|C62,C68,C121-C125,I60-I61,I142-I144,V48,V121-V126
-T5|.|build Cloudflare Access JWT middleware/admin route protection|C5,I35,V1,R4,R5
-T6|.|build catalog/categories public API + admin CRUD + product availability|I26-I27,I36-I45,V2,V38
-T7|.|build inventory service/movements + admin stock UI|C20-C25,I41,I74,V3-V8,V40,V41
-T8|.|build R2 original image upload + ordered gallery flow|C40-C44,I42-I44,I81,V29-V31
-T9|.|build promotion engine + admin promotion CRUD/conflict validation|C34-C38,I46,I79,V19-V22
-T10|.|build exchange-rate provider/cache/cron/manual fallback/admin settings|C10-C18,I28,I58-I59,I64,I80,V12-V18,V42-V44,R8
-T11|.|build cart/currency/source/privacy state + public Store Home/Product|I1-I5,I18-I25,I85-I90,V24,V34-V36,V45-V46,V69
-T12|.|build order-intent service/API/idempotency/rate lock/WhatsApp+device guard|C27-C32,C121-C125,I29-I33,I72-I73,I82,I87,I142-I144,V9-V18,V27-V28,V52,V54-V56,V63-V64,V121-V126
-T13|.|build admin Pedidos list/detail + refresh/discard/confirm/cancel-sale actions|C73-C76,C114-C120,I14-I15,I22-I23,I47-I52,I88,I141,I146,I148-I149,V58-V59,V70,V113-V120
-T14|.|build atomic confirm/cancel-sale inventory handling + concurrency races|I74,I83-I84,I141,V6-V8,V41,V57,V67,V117-V118,V127
-T15|.|build anonymous analytics ingestion/retention + admin analytics/dashboard real sales|C52-C56,I34,I53-I55,I77,V25-V26,V60-V62
-T16|.|build admin settings WhatsApp/store/privacy/currency integration|I17,I56-I59,I76,C70
-T17|.|add not-found/error/loading/empty/stock-changed/rate-unavailable states|C59,I20-I25,V37,V64
-T18|.|add unit+integration tests commerce/rate/order/inventory/auth/media adapters|V1-V70
-T19|.|add Playwright golden/race/rate/mobile+desktop admin smoke tests|V66-V70
-T20|.|configure dev/preview/prod envs, R2/Turso bindings, migrations, cron, build/deploy|C1-C2,I62-I65,V49-V51
-T21|.|run accessibility/performance/security QA; fix drift vs SPEC+DESIGN|C51,C67-C68,V34-V36,V48-V51
-T22|.|final docs/seed/operational checklist + Cavekit `/check --all` equivalent review|G,C1-C78,I1-I93,V1-V70
+T1|x|scaffold React+Vite+CF Worker+Hono+TS strict+pnpm; scripts/env/typegen|C1,C2,C63,C64,R2,R3
+T2|x|install design tokens/assets/components baseline; remove dark mode|C45-C50,V32-V36
+T3|x|define Drizzle schema+migrations+seed + repository boundaries|I68-I78,V3,V49,V52,V53
+T4|~|build API foundation: Hono groups/Zod/error envelope/server abuse guard|C62,C68,C121-C125,I60-I61,I142-I144,V48,V121-V126
+T5|x|build Cloudflare Access JWT middleware/admin route protection|C5,I35,V1,R4,R5
+T6|x|build catalog/categories public API + admin CRUD + product availability|I26-I27,I36-I45,V2,V38
+T7|x|build inventory service/movements + admin stock UI|C20-C25,I41,I74,V3-V8,V40,V41
+T8|x|build R2 original image upload + ordered gallery flow|C40-C44,I42-I44,I81,V29-V31
+T9|x|build promotion engine + admin promotion CRUD/conflict validation|C34-C38,I46,I79,V19-V22
+T10|x|build exchange-rate provider/cache/cron/manual fallback/admin settings|C10-C18,I28,I58-I59,I64,I80,V12-V18,V42-V44,R8
+T11|x|build cart/currency/source/privacy state + public Store Home/Product|I1-I5,I18-I25,I85-I90,V24,V34-V36,V45-V46,V69
+T12|x|build order-intent service/API/idempotency/rate lock/WhatsApp+device guard|C27-C32,C121-C125,I29-I33,I72-I73,I82,I87,I142-I144,V9-V18,V27-V28,V52,V54-V56,V63-V64,V121-V126
+T13|x|build admin Pedidos list/detail + refresh/discard/confirm/cancel-sale actions|C73-C76,C114-C120,I14-I15,I22-I23,I47-I52,I88,I141,I146,I148-I149,V58-V59,V70,V113-V120
+T14|x|build atomic confirm/cancel-sale inventory handling + concurrency races|I74,I83-I84,I141,V6-V8,V41,V57,V67,V117-V118,V127
+T15|x|build anonymous analytics ingestion/retention + admin analytics/dashboard real sales|C52-C56,I34,I53-I55,I77,V25-V26,V60-V62
+T16|x|build admin settings WhatsApp/store/privacy/currency integration|I17,I56-I59,I76,C70
+T17|x|add not-found/error/loading/empty/stock-changed/rate-unavailable states|C59,I20-I25,V37,V64
+T18|x|add unit+integration tests commerce/rate/order/inventory/auth/media adapters|V1-V70
+T19|x|~~add Playwright golden/race/rate/mobile+desktop admin smoke tests~~ dropped 2026-09-24 (C66 amended); V66-V68 flows covered by Vitest service/API tests + production smoke|V66-V70
+T20|x|configure dev/preview/prod envs, R2/Turso bindings, migrations, cron, build/deploy|C1-C2,I62-I65,V49-V51
+T21|~|run accessibility/performance/security QA; fix drift vs SPEC+DESIGN|C51,C67-C68,V34-V36,V48-V51
+T22|~|final docs/seed/operational checklist + Cavekit `/check --all` equivalent review|G,C1-C78,I1-I93,V1-V70
 T23|~|implement closed base/PREORDER transition matrix + audit semantics|R12,C89-C93,C114-C120,I146,I149,V113-V120,V127
 T24|~|add fulfillment/order/payment/shipping/audit/abuse schema + reversible STOCK backfill migration|I112-I117,I140,I146-I147,V71,V107,V120,V124
 T25|x|extend contracts/validation/catalog queries for fulfillment + measurement fields|C79-C83,I104,I107-I110,V71-V77
 T26|~|build PREORDER quote/deposit math + resolved base/stage/payment transactions/idempotency|C84-C94,C114-C120,I109,I117,I119-I123,I149,V78-V84,V113-V120,V127
 T27|~|split mixed cart+checkout by fulfillment; preserve unsubmitted group; handle fulfillment races|C95-C96,C112,I108,I110,V85-V87,V106
 T28|x|build PREORDER Store/Product Detail/cart terms + safe WhatsApp variant|C82-C83,I95-I96,I131,V75-V77,V99
-T29|.|build STOCK shipping selector + PERSONAL points public API/map+list/Admin CRUD|C97-C99,I97-I99,I105,I116,I118,V88-V92
-T30|.|build Yummy provider boundary + verified-adapter gate + non-blocking fallback/requote states|C100-C103,C113,I100,I106,I128-I129,V93-V95,V110-V111,R11
-T31|.|build NATIONAL selection/validation/WhatsApp/Admin detail without tariff integration|C104-C105,I101,I107,I130,V96-V99
+T29|x|build STOCK shipping selector + PERSONAL points public API/map+list/Admin CRUD|C97-C99,I97-I99,I105,I116,I118,V88-V92
+T30|x|build Yummy provider boundary + verified-adapter gate + non-blocking fallback/requote states|C100-C103,C113,I100,I106,I128-I129,V93-V95,V110-V111,R11
+T31|x|build NATIONAL selection/validation/WhatsApp/Admin detail without tariff integration|C104-C105,I101,I107,I130,V96-V99
 T32|~|extend Admin product/order screens + expiry/cancel-sale/PREORDER stages/payments/timeline/metrics|C89-C93,C111,C114-C120,I124-I126,I138,I141,I146,I148-I149,V80-V84,V105,V113-V120
 T33|x|build `/guia-de-tallas` route+links+exact steps/tips+2 accessible CORU vectors|C106-C109,I94,I102-I103,I132-I135,V100-V103
 T34|~|extend analytics allowlist/dimensions + privacy/log guards for delivery/payment/antiabuse data|C110,C123,I136-I137,I147,V104,V108-V110,V124
@@ -498,3 +501,9 @@ T41|x|redesign STOCK cart shipping as compact nested panel; make new NATIONAL re
 
 ## §B BUGS
 id|date|cause|fix
+B1|2026-09-24|Hrana `transaction()` could COMMIT after a failed statement (non-atomic multi-statement writes)|single conditional Hrana `batch`: BEGIN → OK-conditioned steps → COMMIT only if all ok else ROLLBACK; covered by `tests/db.client.test.ts`
+B2|2026-09-24|stale isolate could overwrite newer Turso order state; stock used absolute writes; persistence errors swallowed|admin order routes refresh from Turso first; conditional `UPDATE … WHERE status/stage/payment`; stock as deltas guarded by transition marker; await persist; 409 `ORDER_CONFLICT` / 503 `PERSISTENCE_UNAVAILABLE`
+B3|2026-09-24|order hydration omitted `order_payments` and `order_audits`|hydrate both tables with orders; covered by persistence path in `src/worker/persistence.ts`
+B4|2026-09-24|anti-abuse HMAC used a hard-coded fallback secret in production paths|env `CORU_ABUSE_SECRET` (min 32); production without it → 503 `ORDER_INTENT_GUARD_UNAVAILABLE`; local/tests use development constant
+B5|2026-09-xx|epoch (1970) placeholder rate metadata disabled Bs despite a usable initial rate|hydration discards epoch rate metadata; see `docs/IMPLEMENTATION_STATUS.md`
+B6|2026-09-24|analytics CHECK constraint lacked new event names (`privacy_view`, `not_found_view`, …)|migration `drizzle/0006_coru_analytics_public_views.sql` rebuilds CHECK while preserving rows; local only until applied to Turso

@@ -5,7 +5,7 @@ const RETENTION_DAYS = 180
 const DAY_MS = 24 * 60 * 60 * 1000
 const CARACAS_TIMEZONE = 'America/Caracas' as const
 const CARACAS_OFFSET = '-04:00'
-const navigationEvents = new Set<AnalyticsEvent['name']>(['catalog_view', 'product_view', 'size_guide_view'])
+const navigationEvents = new Set<AnalyticsEvent['name']>(['catalog_view', 'product_view', 'size_guide_view', 'privacy_view', 'not_found_view'])
 
 export type AnalyticsSummary = {
   events: number
@@ -38,7 +38,9 @@ export type ResolvedAnalyticsRange = {
 
 export type TrafficSummary = {
   visits: number
+  pageViews: number
   sessions: number
+  uniqueVisitors: number
   pagesPerSession: number
 }
 
@@ -54,17 +56,18 @@ export type ProductInterestRow = {
 
 export type AnalyticsTimelineBucket = {
   bucket: string
-  uniqueVisits: number
+  uniqueVisitors: number
   unitsAdded: number
   whatsappIntents: number
 }
 
-export type AnalyticsSource = 'instagram' | 'facebook' | 'whatsapp' | 'direct' | 'other'
+export type AnalyticsSource = 'instagram' | 'facebook' | 'whatsapp' | 'search' | 'direct' | 'other'
 export type AnalyticsDevice = 'mobile' | 'tablet' | 'desktop' | 'unknown'
 
 export type AdminAnalyticsSummaryV2 = {
   range: Pick<ResolvedAnalyticsRange, 'from' | 'to' | 'timezone'>
-  kpis: { uniqueVisits: number; totalVisits: number; uniqueDevices: number; unitsAdded: number; whatsappIntents: number }
+  kpis: { pageViews: number; sessions: number; uniqueVisitors: number; unitsAdded: number; whatsappIntents: number }
+  sessionsAvailableFrom: string | null
   commercial: { unitsAdded: number; potentialValueCents: number; potentialValueEstimated: boolean; whatsappPerAddPct: number }
   funnel: { catalogSessions: number; productViewSessions: number; addSessions: number; whatsappSessions: number; confirmedOrders: number }
   sources: Array<{ source: AnalyticsSource; visits: number; percentage: number }>
@@ -116,8 +119,8 @@ function visitorIdFor(event: AnalyticsEvent): string | undefined {
   return stringProperty(event, 'visitorId')
 }
 
-function sessionIdentityFor(event: AnalyticsEvent): string {
-  return visitorIdFor(event) ?? `session:${event.sessionId}`
+function sessionIdentityFor(event: AnalyticsEvent): string | undefined {
+  return stringProperty(event, 'sessionModel') === 'idle30-v1' && event.sessionId.trim() ? event.sessionId : undefined
 }
 
 function quantityDelta(event: AnalyticsEvent): number {
@@ -143,6 +146,7 @@ function normalizeSource(value: string | undefined): AnalyticsSource {
   if (source === 'instagram' || source === 'ig') return 'instagram'
   if (source === 'facebook' || source === 'fb') return 'facebook'
   if (source === 'whatsapp' || source === 'wa') return 'whatsapp'
+  if (source === 'google' || source === 'google_business' || source === 'gbp' || source === 'bing' || source === 'search') return 'search'
   if (!source || source === 'direct' || source === 'directo') return 'direct'
   return 'other'
 }
@@ -210,9 +214,15 @@ export function resolveAnalyticsDateRange(fromRaw?: string, toRaw?: string, now 
 }
 
 export function summarizeTraffic(state: CoruState, range: AnalyticsRange = {}): TrafficSummary {
-  const visits = uniqueCatalogVisitEvents(eventsInRange(state, range))
-  const sessions = new Set(visits.map(visitorIdFor).filter((id): id is string => Boolean(id))).size
-  return { visits: visits.length, sessions, pagesPerSession: sessions ? Number((visits.length / sessions).toFixed(2)) : 0 }
+  const events = eventsInRange(state, range)
+  const pageViews = pageViewEvents(events)
+  const uniqueVisitors = uniqueVisitorPageViewEvents(pageViews).length
+  const publicSessionIds = sessionIdsWithPageViews(state.analytics)
+  const sessions = countSessions(events.filter((event) => {
+    const sessionId = sessionIdentityFor(event)
+    return Boolean(sessionId && publicSessionIds.has(sessionId))
+  }))
+  return { visits: uniqueVisitors, pageViews: pageViews.length, sessions, uniqueVisitors, pagesPerSession: sessions ? Number((pageViews.length / sessions).toFixed(2)) : 0 }
 }
 
 function eventsInRange(state: CoruState, range: AnalyticsRange): AnalyticsEvent[] {
@@ -231,6 +241,14 @@ function orderInRange(order: Order, status: Order['status'], range: AnalyticsRan
   const timestamp = orderDate(order, status)
   if (!timestamp) return false
   const value = Date.parse(timestamp)
+  if (Number.isNaN(value)) return false
+  if (range.fromMs !== undefined && value < range.fromMs) return false
+  if (range.toMs !== undefined && value > range.toMs) return false
+  return true
+}
+
+function orderCreatedInRange(order: Order, range: AnalyticsRange): boolean {
+  const value = Date.parse(order.createdAt)
   if (Number.isNaN(value)) return false
   if (range.fromMs !== undefined && value < range.fromMs) return false
   if (range.toMs !== undefined && value > range.toMs) return false
@@ -256,24 +274,29 @@ function visitDistribution(events: AnalyticsEvent[], property: (event: Analytics
   return [...counts.entries()].map(([label, visits]) => ({ label, visits, percentage: percentage(visits, total) })).sort((a, b) => b.visits - a.visits || a.label.localeCompare(b.label))
 }
 
-function uniqueCatalogVisitEvents(events: AnalyticsEvent[]): AnalyticsEvent[] {
+function pageViewEvents(events: AnalyticsEvent[]): AnalyticsEvent[] {
+  return events.filter((event) => navigationEvents.has(event.name))
+}
+
+function sessionIdsWithPageViews(events: AnalyticsEvent[]): Set<string> {
+  return new Set(pageViewEvents(events).map(sessionIdentityFor).filter((id): id is string => Boolean(id)))
+}
+
+function uniqueVisitorPageViewEvents(events: AnalyticsEvent[]): AnalyticsEvent[] {
   const seen = new Set<string>()
-  return [...events]
-    .filter((event) => event.name === 'catalog_view' && Boolean(visitorIdFor(event)))
+  return [...pageViewEvents(events)]
     .sort((a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt))
     .filter((event) => {
-      const key = visitorIdFor(event)
-      if (!key) return false
-      if (seen.has(key)) return false
-      seen.add(key)
+      const visitorId = visitorIdFor(event)
+      if (!visitorId || seen.has(visitorId)) return false
+      seen.add(visitorId)
       return true
     })
 }
 
-function uniqueCatalogVisitEventsPerDay(events: AnalyticsEvent[]): AnalyticsEvent[] {
+function uniqueVisitorPageViewEventsPerDay(events: AnalyticsEvent[]): AnalyticsEvent[] {
   const seen = new Set<string>()
-  return [...events]
-    .filter((event) => event.name === 'catalog_view' && Boolean(visitorIdFor(event)))
+  return [...pageViewEvents(events)]
     .sort((a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt))
     .filter((event) => {
       const visitorId = visitorIdFor(event)
@@ -285,9 +308,31 @@ function uniqueCatalogVisitEventsPerDay(events: AnalyticsEvent[]): AnalyticsEven
     })
 }
 
-function bucketFor(event: AnalyticsEvent, range: ResolvedAnalyticsRange): string {
+function firstPageViewPerSession(events: AnalyticsEvent[]): AnalyticsEvent[] {
+  const firstBySession = new Map<string, AnalyticsEvent>()
+  for (const event of pageViewEvents(events).sort((a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt))) {
+    const sessionId = sessionIdentityFor(event)
+    if (sessionId && !firstBySession.has(sessionId)) firstBySession.set(sessionId, event)
+  }
+  return [...firstBySession.values()]
+}
+
+function countSessions(events: AnalyticsEvent[]): number {
+  return new Set(events.map(sessionIdentityFor).filter((id): id is string => Boolean(id))).size
+}
+
+function sessionsAvailableFrom(events: AnalyticsEvent[]): string | null {
+  const first = events
+    .filter((event) => navigationEvents.has(event.name) && Boolean(sessionIdentityFor(event)))
+    .map((event) => Date.parse(event.occurredAt))
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b)[0]
+  return first === undefined ? null : localDateString(new Date(first))
+}
+
+function bucketFor(event: AnalyticsEvent): string {
   const parts = localDateParts(new Date(event.occurredAt))
-  return range.from === range.to ? parts.hour + ':00' : parts.year + '-' + parts.month + '-' + parts.day
+  return parts.year + '-' + parts.month + '-' + parts.day
 }
 
 export function summarizeProductInterest(state: CoruState, range: AnalyticsRange = {}): ProductInterestRow[] {
@@ -299,7 +344,11 @@ export function summarizeProductInterest(state: CoruState, range: AnalyticsRange
     const row = rows.get(productId) ?? { views: 0, unitsAdded: 0, addSessions: new Set<string>() }
     row.name ??= stringProperty(event, 'productName')
     if (event.name === 'product_view') row.views += 1
-    else { row.unitsAdded += quantityDelta(event); row.addSessions.add(event.sessionId) }
+    else {
+      row.unitsAdded += quantityDelta(event)
+      const sessionId = sessionIdentityFor(event)
+      if (sessionId) row.addSessions.add(sessionId)
+    }
     rows.set(productId, row)
   }
   const result = [...rows.entries()].map(([productId, row]) => {
@@ -311,13 +360,28 @@ export function summarizeProductInterest(state: CoruState, range: AnalyticsRange
   return result.map((row) => ({ ...row, relativeInterestPct: percentage(row.interestScore, maxScore) }))
 }
 
-export function summarizeAnalyticsV2(state: CoruState, orders: Order[] = state.orders, range: ResolvedAnalyticsRange): AdminAnalyticsSummaryV2 {
+export function toCaracasDateString(value: string | Date): string {
+  return localDateString(typeof value === 'string' ? new Date(value) : value)
+}
+
+export function summarizeAnalyticsV2(state: CoruState, orders: Order[] = state.orders, range: ResolvedAnalyticsRange, options?: { sessionsAvailableFrom?: string | null }): AdminAnalyticsSummaryV2 {
   const events = eventsInRange(state, range)
-  const catalogVisits = uniqueCatalogVisitEvents(events)
-  const totalVisits = events.filter((event) => event.name === 'catalog_view').length
-  const uniqueDevices = new Set(catalogVisits.map(visitorIdFor).filter((id): id is string => Boolean(id)))
+  const pageViews = pageViewEvents(events)
+  const uniqueVisitors = uniqueVisitorPageViewEvents(pageViews)
+  const dailyUniqueVisitors = uniqueVisitorPageViewEventsPerDay(pageViews)
+  const publicSessionIds = sessionIdsWithPageViews(state.analytics)
+  const validSessionEvents = events.filter((event) => {
+    const sessionId = sessionIdentityFor(event)
+    return Boolean(sessionId && publicSessionIds.has(sessionId))
+  })
+  const sessionsInRange = new Set(validSessionEvents.map(sessionIdentityFor).filter((id): id is string => Boolean(id)))
+  const firstSessionPageViews = firstPageViewPerSession(state.analytics.filter((event) => {
+    const sessionId = sessionIdentityFor(event)
+    return Boolean(sessionId && sessionsInRange.has(sessionId))
+  }))
   const adds = events.filter((event) => event.name === 'cart_add')
   const orderIntents = events.filter((event) => event.name === 'order_intent')
+  const ordersCreated = orders.filter((order) => orderCreatedInRange(order, range))
   const unitsAdded = adds.reduce((sum, event) => sum + quantityDelta(event), 0)
   let potentialValueCents = 0
   let potentialValueEstimated = false
@@ -327,24 +391,29 @@ export function summarizeAnalyticsV2(state: CoruState, orders: Order[] = state.o
     if (snapshotPrice === undefined) potentialValueEstimated = true
     if (price !== undefined) potentialValueCents += price * quantityDelta(event)
   }
-  const sessionsWithAdd = new Set(adds.map(sessionIdentityFor)).size
-  const sessionsWithIntent = new Set(orderIntents.map(sessionIdentityFor)).size
+  const sessionsWithAdd = countSessions(adds)
+  const sessionsWithIntent = countSessions(orderIntents)
   const confirmed = orders.filter((order) => order.status === 'CONFIRMED' && orderInRange(order, 'CONFIRMED', range))
-  const sourceEntries = visitDistribution(catalogVisits, (event) => normalizeSource(event.source)).map(({ label, visits, percentage: pct }) => ({ source: label as AnalyticsSource, visits, percentage: pct }))
-  const deviceEntries = visitDistribution(catalogVisits, (event) => normalizeDevice(stringProperty(event, 'device'))).map(({ label, visits, percentage: pct }) => ({ device: label as AnalyticsDevice, visits, percentage: pct }))
+  const sourceEntries = visitDistribution(firstSessionPageViews, (event) => normalizeSource(event.source)).map(({ label, visits, percentage: pct }) => ({ source: label as AnalyticsSource, visits, percentage: pct }))
+  const deviceEntries = visitDistribution(dailyUniqueVisitors, (event) => normalizeDevice(stringProperty(event, 'device'))).map(({ label, visits, percentage: pct }) => ({ device: label as AnalyticsDevice, visits, percentage: pct }))
   const timelineMap = new Map<string, AnalyticsTimelineBucket>()
-  for (const event of uniqueCatalogVisitEventsPerDay(events)) {
-    const bucket = bucketFor(event, range)
-    const current = timelineMap.get(bucket) ?? { bucket, uniqueVisits: 0, unitsAdded: 0, whatsappIntents: 0 }
-    current.uniqueVisits += 1
+  for (const event of dailyUniqueVisitors) {
+    const bucket = bucketFor(event)
+    const current = timelineMap.get(bucket) ?? { bucket, uniqueVisitors: 0, unitsAdded: 0, whatsappIntents: 0 }
+    current.uniqueVisitors += 1
     timelineMap.set(bucket, current)
   }
   for (const event of events) {
-    if (event.name !== 'cart_add' && event.name !== 'order_intent') continue
-    const bucket = bucketFor(event, range)
-    const current = timelineMap.get(bucket) ?? { bucket, uniqueVisits: 0, unitsAdded: 0, whatsappIntents: 0 }
-    if (event.name === 'cart_add') current.unitsAdded += quantityDelta(event)
-    if (event.name === 'order_intent') current.whatsappIntents += 1
+    if (event.name !== 'cart_add') continue
+    const bucket = bucketFor(event)
+    const current = timelineMap.get(bucket) ?? { bucket, uniqueVisitors: 0, unitsAdded: 0, whatsappIntents: 0 }
+    current.unitsAdded += quantityDelta(event)
+    timelineMap.set(bucket, current)
+  }
+  for (const order of ordersCreated) {
+    const bucket = toCaracasDateString(order.createdAt)
+    const current = timelineMap.get(bucket) ?? { bucket, uniqueVisitors: 0, unitsAdded: 0, whatsappIntents: 0 }
+    current.whatsappIntents += 1
     timelineMap.set(bucket, current)
   }
   const realOrders = {
@@ -356,19 +425,31 @@ export function summarizeAnalyticsV2(state: CoruState, orders: Order[] = state.o
   }
   return {
     range: { from: range.from, to: range.to, timezone: range.timezone ?? CARACAS_TIMEZONE },
-    kpis: { uniqueVisits: catalogVisits.length, totalVisits, uniqueDevices: uniqueDevices.size, unitsAdded, whatsappIntents: orderIntents.length },
+    kpis: { pageViews: pageViews.length, sessions: countSessions(validSessionEvents), uniqueVisitors: uniqueVisitors.length, unitsAdded, whatsappIntents: ordersCreated.length },
+    sessionsAvailableFrom: options && 'sessionsAvailableFrom' in options ? options.sessionsAvailableFrom ?? null : sessionsAvailableFrom(state.analytics),
     commercial: { unitsAdded, potentialValueCents, potentialValueEstimated, whatsappPerAddPct: percentage(sessionsWithIntent, sessionsWithAdd) },
-    funnel: { catalogSessions: catalogVisits.length, productViewSessions: new Set(events.filter((event) => event.name === 'product_view').map(sessionIdentityFor)).size, addSessions: sessionsWithAdd, whatsappSessions: sessionsWithIntent, confirmedOrders: confirmed.length },
+    funnel: { catalogSessions: countSessions(events.filter((event) => navigationEvents.has(event.name))), productViewSessions: countSessions(events.filter((event) => event.name === 'product_view')), addSessions: sessionsWithAdd, whatsappSessions: sessionsWithIntent, confirmedOrders: confirmed.length },
     sources: sourceEntries,
     devices: deviceEntries,
-    timeline: [...timelineMap.values()].sort((a, b) => a.bucket.localeCompare(b.bucket)),
+    timeline: fillTimelineRange(range.from, range.to, timelineMap),
     realOrders,
   }
 }
 
+function fillTimelineRange(from: string, to: string, timelineMap: Map<string, AnalyticsTimelineBucket>): AnalyticsTimelineBucket[] {
+  const result: AnalyticsTimelineBucket[] = []
+  let cursor = from
+  for (;;) {
+    result.push(timelineMap.get(cursor) ?? { bucket: cursor, uniqueVisitors: 0, unitsAdded: 0, whatsappIntents: 0 })
+    if (cursor === to) break
+    cursor = shiftDate(cursor, 1)
+  }
+  return result
+}
+
 export function summarizeAnalytics(state: CoruState, orders: Order[] = state.orders, range: AnalyticsRange = {}): AnalyticsSummary {
   const filteredEvents = eventsInRange(state, range)
-  const funnel: AnalyticsSummary['funnel'] = { catalog_view: 0, product_view: 0, cart_add: 0, order_intent: 0, order_confirmed: 0, size_guide_view: 0, shipping_method_selected: 0, yummy_quote_requested: 0, yummy_quote_succeeded: 0, yummy_quote_failed: 0, preorder_intent_created: 0, preorder_deposit_recorded: 0, preorder_ready: 0, preorder_completed: 0 }
+  const funnel: AnalyticsSummary['funnel'] = { catalog_view: 0, product_view: 0, cart_add: 0, order_intent: 0, order_confirmed: 0, size_guide_view: 0, privacy_view: 0, not_found_view: 0, shipping_method_selected: 0, yummy_quote_requested: 0, yummy_quote_succeeded: 0, yummy_quote_failed: 0, preorder_intent_created: 0, preorder_deposit_recorded: 0, preorder_ready: 0, preorder_completed: 0 }
   const sources: Record<string, number> = {}
   const devices: Record<string, number> = {}
   let started = 0

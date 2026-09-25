@@ -26,6 +26,18 @@ describe('v1.1 fulfillment and order safeguards', () => {
     expect(state.movements).toHaveLength(0)
   })
 
+  it('allows a preorder accessory to use informational sizing without ring measurements', () => {
+    const product = state.products.find((entry) => entry.id === 'cadena-mini')!
+    product.fulfillmentType = 'PREORDER'
+    product.stockQuantity = 0
+    product.sizeLabel = 'Largo 45 cm'
+    product.measurementsText = undefined
+    product.leadTime = '3–4 semanas'
+
+    const created = createPendingOrder(state, [{ productId: product.id, quantity: 1 }], 'USD', undefined, 'preorder-accessory', new Date('2026-09-01T12:00:00Z')).order
+    expect(created).toMatchObject({ fulfillmentTypeSnapshot: 'PREORDER', status: 'PENDING' })
+  })
+
   it('cancels a confirmed STOCK sale once and restores exact quantities', () => {
     const product = state.products.find((entry) => entry.id === 'orbita-oscura')!
     const before = product.stockQuantity

@@ -1,12 +1,11 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { loadCart, loadCurrency, saveCart, saveCurrency } from '../../../shared/storage'
 import type { CartLine, Currency, Product } from '../../../shared/types'
-import { ApiClientError, fetchExchangeRate } from '../../api/public'
+import { fetchExchangeRate } from '../../api/public'
 import { demoProducts } from '../../../shared/catalog'
 import type { PromotionRule } from '../../../shared/commerce'
 import { analytics } from '../../analytics/client'
-
-const DEFAULT_RATE_MICROS = 36_420_000
+import { initialRateForLocation } from './rate-state'
 
 type CartContextValue = {
   lines: CartLine[]
@@ -16,7 +15,7 @@ type CartContextValue = {
   rateAvailable: boolean
   rateLoading: boolean
   refreshRate: () => Promise<void>
-  add: (product: Product) => void
+  add: (product: Product) => boolean
   setQuantity: (productId: string, quantity: number) => void
   remove: (productId: string) => void
   clear: () => void
@@ -29,8 +28,9 @@ const CartContext = createContext<CartContextValue | null>(null)
 export function CartProvider({ children, products = demoProducts, promotion, catalogReady = false }: { children: ReactNode; products?: Product[]; promotion?: PromotionRule | null; catalogReady?: boolean }) {
   const [lines, setLines] = useState<CartLine[]>(() => loadCart())
   const [currency, setCurrencyState] = useState<Currency>(() => loadCurrency())
-  const [rateMicros, setRateMicros] = useState<number | null>(DEFAULT_RATE_MICROS)
-  const [rateAvailable, setRateAvailable] = useState(true)
+  const initialRate = initialRateForLocation(typeof window === 'undefined' ? { hostname: '', port: '' } : window.location)
+  const [rateMicros, setRateMicros] = useState<number | null>(initialRate.rateMicros)
+  const [rateAvailable, setRateAvailable] = useState(initialRate.rateAvailable)
   const [rateLoading, setRateLoading] = useState(false)
   const linesRef = useRef(lines)
 
@@ -77,19 +77,12 @@ export function CartProvider({ children, products = demoProducts, promotion, cat
       const available = result.available && Boolean(result.rateMicros)
       setRateAvailable(available)
       setRateMicros(available && result.rateMicros ? result.rateMicros : null)
-      if (!available && currency === 'Bs') { setCurrencyState('USD'); saveCurrency('USD') }
-    } catch (error) {
-      // A local Vite session has no Worker mounted at /api. Keep the demo
-      // rate in that case; an explicit API unavailability response still
-      // disables Bs through the branch above.
-      const hostname = typeof window !== 'undefined' ? window.location.hostname : ''
-      const port = typeof window !== 'undefined' ? window.location.port : ''
-      const localPreview = (hostname === 'localhost' || hostname === '127.0.0.1') && (port === '' || port === '4173' || port === '4174')
-      // Any failed Worker response means the public rate cannot be trusted.
-      // Keep the local demo fallback limited to Vite preview, but disable Bs
-      // for every HTTP failure in a real origin (including 4xx responses).
-      const serverUnavailable = error instanceof ApiClientError && (error.code === 'NETWORK_ERROR' || error.code === 'HTTP_ERROR' || error.status >= 400)
-      if (!localPreview && serverUnavailable) { setRateAvailable(false); setRateMicros(null); if (currency === 'Bs') { setCurrencyState('USD'); saveCurrency('USD') } }
+      if (!available) { setCurrencyState('USD'); saveCurrency('USD') }
+    } catch {
+      // A transport error is not a new rate. Keep the last successful value
+      // in memory and never replace it with a made-up fallback. If no known
+      // rate exists, leave Bs unavailable and select USD.
+      if (!rateAvailable) { setCurrencyState('USD'); saveCurrency('USD') }
     } finally { setRateLoading(false) }
   }
 
@@ -110,10 +103,11 @@ export function CartProvider({ children, products = demoProducts, promotion, cat
       const requestedQuantity = previousQuantity + 1
       const nextQuantity = (product.fulfillmentType ?? 'STOCK') === 'PREORDER' ? requestedQuantity : Math.min(product.stockQuantity, requestedQuantity)
       const quantityDelta = nextQuantity - previousQuantity
-      if (quantityDelta <= 0) return
+      if (quantityDelta <= 0) return false
       const next = existing ? current.map((line) => line.productId === product.id ? { ...line, quantity: nextQuantity } : line) : [...current, { productId: product.id, quantity: nextQuantity }]
       updateLines(next)
       trackIncrement(product, quantityDelta)
+      return true
     },
     setQuantity: (productId, quantity) => {
       const current = linesRef.current

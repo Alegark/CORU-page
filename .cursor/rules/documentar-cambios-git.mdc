@@ -1,0 +1,26 @@
+---
+description: Al commitear o publicar, anotar el cambio en docs/CAMBIOS.md para que quede claro qué subió a git y por qué.
+alwaysApply: true
+---
+
+# Documentar cambios que suben a git
+
+No hagas commit ni push salvo que Diego lo pida. Cuando lo pida, el mismo commit incluye una entrada nueva en `docs/CAMBIOS.md`.
+
+Cada entrada va arriba del todo, debajo del título, con esta forma:
+
+```markdown
+## 2026-09-24 — por qué, en una frase
+
+- Qué cambió (pantallas, rutas, datos, SEO, operación).
+- Commit: `abc1234` si ya existe; si la entrada va en el mismo commit, dejar el hash y actualizarlo después del commit.
+- Producción: versión del Worker o "solo repo", y la URL afectada si hubo deploy.
+```
+
+Reglas:
+
+- Una entrada por commit. Si el commit no se creó, no inventes la entrada.
+- Escribe el porqué, no la lista de archivos.
+- No pegues secretos, teléfonos, tokens ni direcciones privadas.
+- Un deploy sin commit igual se anota, marcando "sin commit" y la versión del Worker.
+- No uses `docs/OPERATIONS.md` para este historial. Ese archivo es el runbook del entorno.

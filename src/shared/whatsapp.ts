@@ -50,11 +50,10 @@ export function formatWhatsappOrderMessage(order: WhatsappMessageOrder, options:
   }
 
   lines.push('', '━━━━━━━━━━━━━━', '💰 *RESUMEN DE PAGO*')
-  if (order.quote.appliedPromotion) lines.push(`- Promoción: ${order.quote.appliedPromotion.name}`)
   lines.push(`- Subtotal: ${formatUsdMessage(order.quote.subtotalCents)}`)
   if (order.quote.discountCents > 0) lines.push(`- Descuento: −${formatUsdMessage(order.quote.discountCents)}`)
   lines.push(`- TOTAL EN USD: *${formatUsdMessage(order.quote.totalCents)}*`)
-  if (options.totalBs !== undefined) lines.push(`- TOTAL EN BS: *${formatBsTotalMessage(options.totalBs)}*`, '- Tasa asegurada hasta finalizar hoy.')
+  if (options.totalBs !== undefined) lines.push(`- TOTAL EN BS: *${formatBsTotalMessage(options.totalBs)}*`)
 
   const notes: string[] = []
   if (order.fulfillmentTypeSnapshot === 'PREORDER') {
@@ -63,5 +62,6 @@ export function formatWhatsappOrderMessage(order: WhatsappMessageOrder, options:
     notes.push('- Envía tu ubicación por WhatsApp para cotizar el delivery.', '- La tarifa de Yummy puede variar según la hora y disponibilidad.')
   }
   if (notes.length) lines.push('', '📝 *NOTAS*', ...notes)
+  if (options.totalBs !== undefined) lines.push('', '', '', 'NOTA: Tasa asegurada hasta finalizar hoy.')
   return lines.join('\n')
 }

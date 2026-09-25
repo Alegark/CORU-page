@@ -27,7 +27,7 @@
   --motion-fast: 140ms;
   --motion-standard: 200ms;
   --motion-sheet: 280ms;
-  --cart-receive-dur: 500ms;
+  --cart-receive-dur: 180ms;
   /* Transitions.dev semantic tokens used by the storefront motion layer. */
   --stagger-dur: 500ms;
   --stagger-distance: 12px;
@@ -56,10 +56,10 @@
   --panel-translate-y: 100px;
   --panel-blur: 2px;
   --panel-ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --badge-slide-dur: 260ms;
-  --badge-pop-dur: 500ms;
+  --badge-slide-dur: 180ms;
+  --badge-pop-dur: 180ms;
   --badge-pop-close-dur: 180ms;
-  --badge-fade-dur: 400ms;
+  --badge-fade-dur: 180ms;
   --badge-fade-close-dur: 180ms;
   --badge-blur: 2px;
   --badge-offset-x: -8.2px;

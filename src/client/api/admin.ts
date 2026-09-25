@@ -22,10 +22,11 @@ export type AdminProductInput = {
   description?: string
   material?: string
   fulfillmentType?: Product['fulfillmentType']
-  measurementsText?: string
-  innerDiameterMm?: number
-  circumferenceMm?: number
-  leadTime?: string
+  measurementsText?: string | null
+  innerDiameterMm?: number | null
+  circumferenceMm?: number | null
+  usSize?: string | null
+  leadTime?: string | null
 }
 
 export function createAdminProduct(input: AdminProductInput, signal?: AbortSignal): Promise<Product> {
@@ -122,7 +123,12 @@ export function updateAdminSettings(input: Partial<StoreSettings>, signal?: Abor
   return requestJson<StoreSettings>('/api/admin/settings', { method: 'PATCH', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) })
 }
 
-export type AdminRateResponse = PublicRateResponse & { validUntil: string; updated?: boolean }
+export type AdminRateResponse = PublicRateResponse & {
+  validUntil: string
+  updated?: boolean
+  lastRefreshError?: string | null
+  lastRefreshAttemptedAt?: string | null
+}
 
 export function updateAdminRate(input: { mode: 'AUTOMATIC' } | { rate: string | number } | { rateMicros: number }, signal?: AbortSignal): Promise<AdminRateResponse> {
   return requestJson<AdminRateResponse>('/api/admin/settings/rate', { method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) })
@@ -159,7 +165,9 @@ export async function uploadAdminImage(productId: string, file: File, signal?: A
   // Send the bytes directly instead of multipart. Cloudflare Access can
   // challenge multipart browser requests before they reach the Worker;
   // the Worker already supports a raw image body with an explicit MIME.
-  const body = await file.arrayBuffer()
+  // Some test/browser shims expose File as a Blob without arrayBuffer(); the
+  // Response fallback keeps the upload path compatible with both shapes.
+  const body = typeof file.arrayBuffer === 'function' ? await file.arrayBuffer() : await new Response(file).arrayBuffer()
   return requestJson<AdminImageRecord>(`/api/admin/products/${encodeURIComponent(productId)}/images`, { method: 'POST', signal, headers: { 'Content-Type': file.type, 'X-Image-Mime': file.type }, body })
 }
 
@@ -176,7 +184,7 @@ export type AdminAnalyticsSummary = {
   funnel: Record<'catalog_view' | 'product_view' | 'cart_add' | 'order_intent' | 'order_confirmed', number>
   sources: Record<string, number>
   devices: Record<string, number>
-  traffic: { visits: number; sessions: number; pagesPerSession: number }
+  traffic: { visits: number; pageViews: number; sessions: number; uniqueVisitors: number; pagesPerSession: number }
   promo: { started: number; completed: number; confirmed: number }
   confirmedOrders: number
   pendingOrders: number
@@ -210,12 +218,13 @@ export type AdminAnalyticsProductInterest = {
 }
 export type AdminAnalyticsSummaryV2 = {
   range: { from: string; to: string; timezone: 'America/Caracas' }
-  kpis: { uniqueVisits: number; totalVisits: number; uniqueDevices: number; unitsAdded: number; whatsappIntents: number }
+  kpis: { pageViews: number; sessions: number; uniqueVisitors: number; unitsAdded: number; whatsappIntents: number }
+  sessionsAvailableFrom: string | null
   commercial: { unitsAdded: number; potentialValueCents: number; potentialValueEstimated: boolean; whatsappPerAddPct: number }
   funnel: { catalogSessions: number; productViewSessions: number; addSessions: number; whatsappSessions: number; confirmedOrders: number }
-  sources: Array<{ source: 'instagram' | 'facebook' | 'whatsapp' | 'direct' | 'other'; visits: number; percentage: number }>
+  sources: Array<{ source: 'instagram' | 'facebook' | 'whatsapp' | 'search' | 'direct' | 'other'; visits: number; percentage: number }>
   devices: Array<{ device: 'mobile' | 'tablet' | 'desktop' | 'unknown'; visits: number; percentage: number }>
-  timeline: Array<{ bucket: string; uniqueVisits: number; unitsAdded: number; whatsappIntents: number }>
+  timeline: Array<{ bucket: string; uniqueVisitors: number; unitsAdded: number; whatsappIntents: number }>
   realOrders: { pending: number; confirmed: number; discarded: number; cancelled: number; confirmedStockRevenueCents: number }
 }
 
@@ -233,6 +242,10 @@ export function fetchAdminAnalyticsSummary(range?: AdminAnalyticsRange, signal?:
 
 export function fetchAdminProductAnalytics(range?: AdminAnalyticsRange, signal?: AbortSignal): Promise<{ products: AdminAnalyticsProductInterest[] }> {
   return requestJson<{ products: AdminAnalyticsProductInterest[] }>(`/api/admin/analytics/products${analyticsQuery(range)}`, { signal })
+}
+
+export function clearAdminCartAddAnalytics(signal?: AbortSignal): Promise<{ deletedEvents: number }> {
+  return requestJson<{ deletedEvents: number }>('/api/admin/analytics/cart-add', { method: 'DELETE', signal })
 }
 
 export function fetchAdminOrders(signal?: AbortSignal): Promise<OrderSummary[]> {

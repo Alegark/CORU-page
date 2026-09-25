@@ -1,8 +1,9 @@
 import type { YummyQuoteRequest, YummyQuoteResponse } from '../../shared/contracts'
+import { YUMMY_DELIVERY_COPY } from '../../shared/shipping-copy'
 import type { Currency } from '../../shared/types'
 import type { CoruBindings } from '../env'
 
-export const YUMMY_FALLBACK_COPY = 'Costo de delivery a confirmar por WhatsApp.' as const
+export const YUMMY_FALLBACK_COPY = YUMMY_DELIVERY_COPY
 
 export type YummyProvider = {
   quote(input: YummyQuoteRequest): Promise<Extract<YummyQuoteResponse, { status: 'quoted' }>>

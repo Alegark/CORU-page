@@ -4,28 +4,32 @@ import { ApiClientError, requestJson, type PublicRateResponse } from './core'
 
 export { ApiClientError, type PublicRateResponse }
 
-export function fetchCatalog(signal?: AbortSignal): Promise<PublicProduct[]> {
-  return requestJson<PublicProduct[]>('/api/catalog', { signal })
+function publicPath(path: string, freshKey?: string): string {
+  return freshKey ? `${path}${path.includes('?') ? '&' : '?'}fresh=${encodeURIComponent(freshKey)}` : path
 }
 
-export function fetchPublicCategories(signal?: AbortSignal): Promise<PublicCategory[]> {
-  return requestJson<PublicCategory[]>('/api/categories', { signal })
+export function fetchCatalog(signal?: AbortSignal, freshKey?: string): Promise<PublicProduct[]> {
+  return requestJson<PublicProduct[]>(publicPath('/api/catalog', freshKey), { signal, cache: freshKey ? 'no-store' : 'default' })
 }
 
-export function fetchActivePromotion(signal?: AbortSignal): Promise<PublicPromotion | null> {
-  return requestJson<PublicPromotion | null>('/api/promotions/active', { signal })
+export function fetchPublicCategories(signal?: AbortSignal, freshKey?: string): Promise<PublicCategory[]> {
+  return requestJson<PublicCategory[]>(publicPath('/api/categories', freshKey), { signal, cache: freshKey ? 'no-store' : 'default' })
+}
+
+export function fetchActivePromotion(signal?: AbortSignal, freshKey?: string): Promise<PublicPromotion | null> {
+  return requestJson<PublicPromotion | null>(publicPath('/api/promotions/active', freshKey), { signal, cache: freshKey ? 'no-store' : 'default' })
 }
 
 export function fetchProduct(slug: string, signal?: AbortSignal): Promise<PublicProduct> {
-  return requestJson<PublicProduct>(`/api/products/${encodeURIComponent(slug)}`, { signal })
+  return requestJson<PublicProduct>(`/api/products/${encodeURIComponent(slug)}`, { signal, cache: 'default' })
 }
 
 export function fetchExchangeRate(signal?: AbortSignal): Promise<PublicRateResponse> {
-  return requestJson<PublicRateResponse>('/api/exchange-rate', { signal })
+  return requestJson<PublicRateResponse>('/api/exchange-rate', { signal, cache: 'default' })
 }
 
 export function fetchPersonalDeliveryPoints(signal?: AbortSignal): Promise<PersonalDeliveryPoint[]> {
-  return requestJson<PersonalDeliveryPoint[]>('/api/personal-delivery-points', { signal })
+  return requestJson<PersonalDeliveryPoint[]>('/api/personal-delivery-points', { signal, cache: 'default' })
 }
 
 export function requestYummyQuote(input: YummyQuoteRequest, signal?: AbortSignal): Promise<YummyQuoteResponse> {

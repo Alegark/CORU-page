@@ -4,9 +4,12 @@ import { ApiClientError, fetchAdminImages, reorderAdminImages, type AdminImageRe
 export type ImageUploadState = 'idle' | 'uploading' | 'ready' | 'failed'
 
 type ImageProcessorProps = {
-  productId: string
+  productId?: string
   onUpload?: (file: File) => Promise<AdminImageRecord | void> | AdminImageRecord | void
   onChanged?: () => Promise<void> | void
+  pendingFiles?: File[]
+  onPendingFilesChange?: (files: File[]) => void
+  disabled?: boolean
 }
 
 const IMAGE_HELP = 'Recomendado: 1200 × 1200 px · JPG, PNG o WEBP · máximo 15 MB'
@@ -21,7 +24,20 @@ function imageStatusCopy(record: AdminImageRecord): string {
   return 'Imagen original lista para mostrar.'
 }
 
-export function ImageProcessor({ productId, onUpload, onChanged }: ImageProcessorProps) {
+function PendingImagePreview({ file, index }: { file: File; index: number }) {
+  const [src, setSrc] = useState('')
+
+  useEffect(() => {
+    if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return
+    const objectUrl = URL.createObjectURL(file)
+    setSrc(objectUrl)
+    return () => URL.revokeObjectURL(objectUrl)
+  }, [file])
+
+  return src ? <img className="image-order-preview" src={src} alt={`Imagen ${index + 1} pendiente`} /> : <span className="image-order-preview image-order-placeholder" aria-hidden="true">{index + 1}</span>
+}
+
+export function ImageProcessor({ productId, onUpload, onChanged, pendingFiles = [], onPendingFilesChange, disabled = false }: ImageProcessorProps) {
   const [status, setStatus] = useState<ImageUploadState>('idle')
   const [message, setMessage] = useState('Las imágenes se guardan tal como las subes.')
   const [images, setImages] = useState<AdminImageRecord[]>([])
@@ -29,21 +45,40 @@ export function ImageProcessor({ productId, onUpload, onChanged }: ImageProcesso
 
   useEffect(() => {
     let active = true
+    if (!productId) return () => { active = false }
     fetchAdminImages(productId).then((loaded) => { if (active) setImages(sortImages(loaded)) }).catch(() => undefined)
     return () => { active = false }
   }, [productId])
 
   async function handleChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
+    const files = Array.from(event.target.files ?? [])
     event.currentTarget.value = ''
-    if (!file) return
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { setStatus('failed'); setMessage('Formato no válido. Usa JPG, PNG o WEBP.'); return }
-    if (file.size > 15 * 1024 * 1024) { setStatus('failed'); setMessage('La imagen supera el límite de 15 MB.'); return }
-    setStatus('uploading'); setMessage('Guardando imagen original…')
+    if (!files.length) return
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp']
+    const invalidType = files.find((file) => !allowedTypes.includes(file.type))
+    const oversized = files.find((file) => file.size > 15 * 1024 * 1024)
+    if (invalidType) { setStatus('failed'); setMessage(`Formato no válido para ${invalidType.name}. Usa JPG, PNG o WEBP.`) }
+    if (oversized) { setStatus('failed'); setMessage(`${oversized.name} supera el límite de 15 MB.`) }
+    const validFiles = files.filter((file) => allowedTypes.includes(file.type) && file.size <= 15 * 1024 * 1024)
+    if (!validFiles.length) return
+
+    if (!productId) {
+      onPendingFilesChange?.([...pendingFiles, ...validFiles])
+      setStatus('ready')
+      setMessage(`${validFiles.length} ${validFiles.length === 1 ? 'imagen lista' : 'imágenes listas'} para subir al guardar el producto.`)
+      return
+    }
+
+    setStatus('uploading'); setMessage(`Guardando ${validFiles.length === 1 ? 'imagen' : `${validFiles.length} imágenes`} original…`)
     try {
-      const uploaded = await onUpload?.(file)
-      if (uploaded) setImages((current) => sortImages([...current.filter((image) => image.id !== uploaded.id), uploaded]))
-      setStatus('ready'); setMessage('Imagen guardada sin alterar. Puedes cambiar su posición abajo.')
+      if (!onUpload) throw new Error('No se configuró la subida de imágenes.')
+      const uploadedImages: AdminImageRecord[] = []
+      for (const file of validFiles) {
+        const uploaded = await onUpload(file)
+        if (uploaded) uploadedImages.push(uploaded)
+      }
+      if (uploadedImages.length) setImages((current) => sortImages([...current, ...uploadedImages]))
+      setStatus('ready'); setMessage(`${validFiles.length === 1 ? 'Imagen guardada' : 'Imágenes guardadas'} sin alterar. Puedes cambiar su posición abajo.`)
       await onChanged?.()
     } catch (error) {
       setStatus('failed'); setMessage(error instanceof ApiClientError ? `${error.message} (${error.code})` : error instanceof Error ? error.message : 'No se pudo guardar la imagen original.')
@@ -51,7 +86,7 @@ export function ImageProcessor({ productId, onUpload, onChanged }: ImageProcesso
   }
 
   async function move(imageId: string, direction: -1 | 1) {
-    if (busyImageId) return
+    if (!productId || busyImageId) return
     const index = images.findIndex((image) => image.id === imageId)
     const targetIndex = index + direction
     if (index < 0 || targetIndex < 0 || targetIndex >= images.length) return
@@ -67,20 +102,28 @@ export function ImageProcessor({ productId, onUpload, onChanged }: ImageProcesso
     } finally { setBusyImageId(null) }
   }
 
-  return <section className={`image-processor image-${status}`} aria-labelledby="image-processor-title">
+  const titleId = productId ? `image-processor-title-${productId}` : 'image-processor-title-new'
+  return <section className={`image-processor image-${status}`} aria-labelledby={titleId}>
     <div>
       <span className="eyebrow">Galería del producto</span>
-      <h2 id="image-processor-title">Sube tus imágenes tal como son.</h2>
+      <h2 id={titleId}>Sube tus imágenes tal como son.</h2>
       <p>{message}</p>
       <small>{IMAGE_HELP}</small>
     </div>
     <div className="image-processor-actions">
       <label className="button button-secondary">
-        <span>{status === 'uploading' ? 'Guardando…' : 'Subir imagen'}</span>
-        <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleChange} disabled={status === 'uploading' || Boolean(busyImageId)} />
+        <span>{status === 'uploading' ? 'Guardando…' : productId ? 'Subir imagen' : 'Elegir imágenes'}</span>
+        <input type="file" accept="image/jpeg,image/png,image/webp" multiple={!productId} onChange={handleChange} disabled={disabled || status === 'uploading' || Boolean(busyImageId)} />
       </label>
     </div>
-    {images.length > 0 && <ol className="image-order-list" aria-label="Orden de imágenes del producto">
+    {pendingFiles.length > 0 && <ol className="image-order-list" aria-label="Imágenes pendientes del producto">
+      {pendingFiles.map((file, index) => <li className="image-order-item" key={`${file.name}-${file.lastModified}-${index}`}>
+        <PendingImagePreview file={file} index={index} />
+        <div className="image-order-copy"><strong>Imagen {index + 1}</strong><small>{file.name}</small></div>
+        <div className="image-order-actions"><button className="icon-button" type="button" onClick={() => onPendingFilesChange?.(pendingFiles.filter((_, fileIndex) => fileIndex !== index))} aria-label={`Quitar imagen ${index + 1}`} title="Quitar imagen">×</button></div>
+      </li>)}
+    </ol>}
+    {productId && images.length > 0 && <ol className="image-order-list" aria-label="Orden de imágenes del producto">
       {images.map((image, index) => <li className="image-order-item" key={image.id}>
         <img className="image-order-preview" src={`/api/admin/products/${encodeURIComponent(productId)}/images/${encodeURIComponent(image.id)}/preview`} alt={`Imagen ${index + 1} del producto`} />
         <div className="image-order-copy"><strong>Imagen {index + 1}</strong><small>{imageStatusCopy(image)}</small></div>

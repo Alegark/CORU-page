@@ -1178,17 +1178,72 @@ The brief is implemented in the current working tree and covered by the responsi
 accessibility, contract and WhatsApp tests described there. It must remain part of the release
 checklist before any production publication.
 
-## Follow-up — anonymous catalog analytics
+## Superseded — first anonymous catalog analytics pass (21-09-2026)
 
-- persist an anonymous browser identifier without collecting IP, contact or device-token data;
-- count `Visitantes únicos` once per identifier in the selected range;
-- count `Visitas totales` from every `catalog_view` event in the selected range;
-- exclude `product_view` and `size_guide_view` events from the general visit total;
-- ignore historical catalog events without a visitor identifier for unique-visitor metrics;
-- retain product-interest metrics separately from the general catalog visit KPI;
-- keep the one-time pre-today analytics cleanup documented and disabled after execution.
+The original `catalog_view`-only “Visitas totales” contract was implemented and
+released at that time. It is historical context, not the current analytics
+contract. The current definition below replaces it and includes all public
+page views, sessions and visitors.
 
-**Verification:** 116 tests, typecheck, production build, Worker dry-run and Cloudflare smoke passed on 21-09-2026.
+## Current follow-up — page views, sessions and visitors (24-09-2026)
+
+- Count each public page load/navigation as a page view: catalog, product, size
+  guide, privacy and not-found. Keep historical catalog/product/guide events;
+  do not count admin/API paths or the cart overlay.
+- Define a session as a shared browser-profile ID with a 30-minute inactivity
+  timeout. Events are tagged `sessionModel: idle30-v1`; only those events are
+  used for the corrected session metric. Do not invent historical sessions.
+- Count `uniqueVisitors` once per `visitorId` over the selected range. The
+  timeline and device breakdown count a profile once per Caracas calendar day;
+  “device” means browser profile classified by screen width, not physical-device
+  identification.
+- Attribute a source to the first public page view in each session. Calculate
+  funnel steps by session, not by visitor. Admin summary fields are
+  `pageViews`, `sessions` and `uniqueVisitors`.
+- Display the date from which valid session data exists. Preserve product
+  interest as a separate metric and keep analytics payloads anonymous.
+- `privacy_view` and `not_found_view` require
+  `drizzle/0006_coru_analytics_public_views.sql`: it rebuilds the SQLite CHECK
+  constraint while preserving analytics rows. Apply this migration before
+  publishing the Worker that records these events.
+- KPI and timeline `whatsappIntents` count **order records** created in the
+  selected range (any status; Caracas day of `createdAt`), not client
+  `order_intent` events. Funnel `whatsappSessions` / `whatsappPerAddPct` stay
+  event-based. Event names live in `src/shared/analytics-events.ts` (checked
+  against the 0006 CHECK list).
+- With Turso bound, isolates do not keep analytics in memory: bootstrap skips
+  analytics hydration; `POST /api/analytics` writes to DB only; admin endpoints
+  load by range with a 1-day lookback and `loadSessionsAvailableFrom`. Client
+  flush splits oversized batches instead of dropping them.
+
+**Local verification (24-09-2026):** 212 tests, typecheck and build passed; the
+new migration was executed against an isolated in-memory SQLite database to
+verify row preservation, new event acceptance and index recreation. This work
+is not yet applied to production Turso or deployed. Keep migration and deploy
+status separate from local validation.
+
+## Follow-up — three-piece promotion banner
+
+- Replace the continuous line in the `3 × $10` Store banner with three compact,
+  connected, numbered steps. Fill reached steps and connectors in Mint; show a
+  check in the third step for each complete group. Keep the black card and the
+  existing visual tokens; stack its full-width action below 768px.
+- Count only units that the bundle quote can apply: known STOCK products marked
+  promo-eligible and matching the promotion target category. Derive complete
+  groups and remainder from that count, including repeated bundles and quantity
+  reductions. Never show an overfull `N de 3` label.
+- Show `Elegir anillos` at zero and `Seguir eligiendo` at one or two; selecting
+  either clears a hiding search, selects the promo category and focuses the
+  catalog search. From three units onward show `Ver carrito` and open the
+  existing cart. Do not create an order from the banner.
+- Keep `FIXED_DISCOUNT` and non-three-piece bundle presentation unchanged.
+  Expose one accessible progressbar and a polite status; respect reduced motion
+  and 44px touch targets. The detailed visual contract is in `design/DESIGN.md`.
+
+**Acceptance:** component and Store tests cover 0–7 units, repeated quantities,
+removal, ineligible products, PREORDER, USD/Bs, cart action and browse action;
+typecheck, tests, build and visual preview at 320/390/689/1280px pass. Local
+validation and production deployment are reported separately.
 
 ---
 

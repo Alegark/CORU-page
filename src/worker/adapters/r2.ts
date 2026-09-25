@@ -3,6 +3,7 @@ import type { ImageStorage } from '../services/image.service'
 export type R2BucketLike = {
   put: (key: string, value: ArrayBuffer | Uint8Array, options?: { httpMetadata?: { contentType?: string } }) => Promise<unknown>
   get?: (key: string) => Promise<{ arrayBuffer: () => Promise<ArrayBuffer> } | null>
+  delete?: (keys: string | string[]) => Promise<unknown>
 }
 
 /** Thin adapter that keeps Cloudflare R2 details out of image domain code. */
@@ -18,6 +19,10 @@ export class R2MediaStore implements ImageStorage {
     const object = await this.bucket.get(key)
     return object ? object.arrayBuffer() : null
   }
+
+  async delete(key: string): Promise<void> {
+    if (this.bucket.delete) await this.bucket.delete(key)
+  }
 }
 
 /** Local/test implementation used when no R2 binding is configured. */
@@ -32,5 +37,9 @@ export class MemoryMediaStore implements ImageStorage {
   async get(key: string): Promise<ArrayBuffer | null> {
     const body = this.objects.get(key)
     return body ? body.slice(0) : null
+  }
+
+  async delete(key: string): Promise<void> {
+    this.objects.delete(key)
   }
 }

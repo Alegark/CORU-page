@@ -2,6 +2,7 @@ import { convertUsdCentsToBs, quoteCart } from './commerce'
 import type { CartLine, Currency, Order, Product, ShippingSelection } from './types'
 import { getSessionId, loadOrders, saveOrders } from './storage'
 import { formatWhatsappOrderMessage } from './whatsapp'
+import { formatProductSizeLabel } from './ring-size'
 
 const DEFAULT_WHATSAPP = '584120000000'
 
@@ -47,7 +48,7 @@ export function createOrderIntent(lines: CartLine[], currency: Currency, rateMic
   const now = new Date()
   const orderItems = cleanLines.map((line) => {
     const product = available.get(line.productId)!
-    return { ...line, name: product.name, sizeLabel: product.sizeLabel, unitPriceCents: product.priceCents, lineTotalCents: product.priceCents * line.quantity, material: product.material, fulfillmentTypeSnapshot: product.fulfillmentType ?? 'STOCK' as const }
+    return { ...line, name: product.name, sizeLabel: formatProductSizeLabel(product, product.sizeLabel), unitPriceCents: product.priceCents, lineTotalCents: product.priceCents * line.quantity, material: product.material, fulfillmentTypeSnapshot: product.fulfillmentType ?? 'STOCK' as const }
   })
   const orders = loadOrders()
   const reference = nextReference(orders)

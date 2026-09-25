@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Brand } from '../../components/brand/Brand'
 import { Icon, icons } from '../../components/ui/Icon'
 import { navigate } from '../../app/router'
+import { markInternalBrowser } from '../../../shared/storage'
 
 export type AdminSection = 'dashboard' | 'products' | 'categories' | 'promotions' | 'orders' | 'analytics' | 'delivery' | 'settings'
 
@@ -32,6 +33,8 @@ export function AdminShell({ section, children, pendingOrders = 0 }: { section: 
   const menuButton = useRef<HTMLButtonElement>(null)
   const closeButton = useRef<HTMLButtonElement>(null)
   const previouslyFocused = useRef<HTMLElement | null>(null)
+
+  useEffect(() => { markInternalBrowser() }, [])
 
   useEffect(() => {
     if (!drawerOpen) return

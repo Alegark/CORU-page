@@ -1,3 +1,5 @@
+import type { AnalyticsEventName } from './analytics-events'
+
 export type Currency = 'USD' | 'Bs'
 
 /** How a product is fulfilled. PREORDER never reserves or consumes stock. */
@@ -84,6 +86,17 @@ export type StoreSettings = {
 
 export type ProductArtwork = 'orbita' | 'star' | 'cross' | 'skull' | 'pearl' | 'chain'
 
+/** Public, versioned image URLs. Missing derivatives intentionally fall back
+ * to the immutable source through the media route. */
+export type ProductImageSource = {
+  id: string
+  src: string
+  thumb320?: string
+  thumb640?: string
+  detail1200?: string
+  og1200?: string
+}
+
 export type Product = {
   id: string
   slug: string
@@ -103,12 +116,15 @@ export type Product = {
   measurementsText?: string
   innerDiameterMm?: number
   circumferenceMm?: number
+  usSize?: string
   /** Fixed customer-facing lead time for PREORDER. */
   leadTime?: string
   /** Public proxy URL is present only when an approved R2 variant exists. */
   imageUrl?: string
   /** Ordered public image URLs; the first one is the product's primary image. */
   imageUrls?: string[]
+  /** Ordered responsive image sources for the storefront. */
+  imageSources?: ProductImageSource[]
 }
 
 export type CartLine = {
@@ -178,7 +194,7 @@ export type OrderAuditEntry = {
 }
 
 export type AnalyticsEvent = {
-  name: 'catalog_view' | 'product_view' | 'cart_add' | 'order_intent' | 'order_confirmed' | 'size_guide_view' | 'shipping_method_selected' | 'yummy_quote_requested' | 'yummy_quote_succeeded' | 'yummy_quote_failed' | 'preorder_intent_created' | 'preorder_deposit_recorded' | 'preorder_ready' | 'preorder_completed'
+  name: AnalyticsEventName
   sessionId: string
   source: string
   occurredAt: string

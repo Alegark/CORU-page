@@ -10,6 +10,12 @@ export type PromotionRule = Pick<Promotion, 'id' | 'name' | 'kind' | 'targetCate
 
 const defaultPromotion: PromotionRule = { id: PROMOTION_ID, name: '3 anillos por $10', kind: 'BUNDLE', targetCategory: 'Anillos', bundleQuantity: BUNDLE_SIZE, bundlePriceCents: BUNDLE_PRICE_CENTS }
 
+/** Keep storefront progress in step with the units used by the bundle quote. */
+export function isEligibleBundleProduct(product: Product | undefined, promotion: PromotionRule | null | undefined): boolean {
+  const rule = promotion === undefined ? defaultPromotion : promotion
+  return Boolean(product && rule?.kind === 'BUNDLE' && (product.fulfillmentType ?? 'STOCK') === 'STOCK' && product.promoEligible && (!rule.targetCategory || product.category === rule.targetCategory))
+}
+
 export function quoteCart(lines: CartLine[], products: Product[], promotion: PromotionRule | null | undefined = defaultPromotion): CommerceQuote {
   const activePromotion = promotion === undefined ? defaultPromotion : promotion
   const productById = new Map(products.map((product) => [product.id, product]))
@@ -28,7 +34,7 @@ export function quoteCart(lines: CartLine[], products: Product[], promotion: Pro
     subtotalCents += product.priceCents * quantity
     const isStock = (product.fulfillmentType ?? 'STOCK') === 'STOCK'
     if (isStock && activePromotion?.kind === 'FIXED_DISCOUNT' && (!activePromotion.targetCategory || product.category === activePromotion.targetCategory)) fixedPromotionSubtotal += product.priceCents * quantity
-    if (isStock && activePromotion && product.promoEligible && (!activePromotion.targetCategory || product.category === activePromotion.targetCategory)) {
+    if (isEligibleBundleProduct(product, activePromotion)) {
       for (let index = 0; index < quantity; index += 1) eligibleUnits.push({ productId, priceCents: product.priceCents })
     }
   }

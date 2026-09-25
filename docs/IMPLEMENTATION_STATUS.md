@@ -49,7 +49,7 @@ La aplicación ya ejecuta un vertical slice local de CORU:
 pnpm typecheck  PASS
 pnpm test       PASS (80 tests)
 pnpm build      PASS
-pnpm test:e2e   PASS (3 tests: mobile + desktop + STOCK delivery)
+pnpm test:e2e   PASS (3 tests: mobile + desktop + STOCK delivery; suite Playwright retirada el 24-09-2026)
 pnpm worker:types    PASS
 pnpm worker:dry-run  PASS
 ```
@@ -101,17 +101,50 @@ La guía de variables, migración y orden de publicación está en `docs/OPERATI
 
 La última publicación de producción es `3aa7aa27-93c0-4533-afb4-15b36a43f817` (19-09-2026). Incluye la guía de tallas rediseñada, el hero de anillo CORU, la ilustración del método de medición del dedo y la nueva ilustración del método 1; el smoke posterior confirmó health 200, catálogo 200 y guard administrativo 302.
 
-La cobertura E2E de Store/Admin se ejecuta localmente contra Vite cuando está
-instalado Chromium. La suite todavía debe repetirse contra un Worker publicado
-con bindings reales para cubrir la persistencia Turso/R2 y los límites del
-entorno de integración.
+La suite E2E con Playwright/Chromium se retiró el 24-09-2026 por decisión del
+propietario. La verificación queda en Vitest, `build`, `worker:dry-run` y el
+`smoke:production` posterior a cada publicación en Cloudflare.
 
 Cloudflare Access ya está configurado y el middleware existente protege el
 panel. Se verificó una sesión autenticada con el proveedor Cloudflare y la
 carga del panel; falta repetir el smoke de mutaciones administrativas contra
 producción. La API pública y la persistencia ya están sanas.
 
-`doc/SPEC.md` se conserva sin modificar porque el archivo recibido contiene un registro `R9|Design source|...` repetido y no ofrece un contrato de negocio legible. No se inventaron reglas a partir de ese contenido.
+`doc/SPEC.md` es el contrato Cavekit/Caveman **recuperado y autoritativo**
+(extendido monotónicamente desde el pre-expansión legible). El archivo
+malformado histórico con miles de copias de un solo registro `R9` quedó
+superseded; no inventar reglas a partir de ese contenido.
+
+## Auditoría y correcciones — 24-09-2026 (local, sin publicar)
+
+Correcciones aplicadas en el árbol local; **no** migradas a Turso ni desplegadas:
+
+- **Persistencia:** `transaction()` del cliente Turso es un batch Hrana
+  condicional atómico; el runner `scripts/apply-turso-migration.mjs` aplica
+  cada migración como un batch atómico (omite `ADD COLUMN` ya existente,
+  aborta con exit 1); `drizzle/0006` sin BEGIN/COMMIT y con
+  `DROP TABLE IF EXISTS analytics_events_v2`; `tests/migrations.test.ts`
+  aplica 0000–0006 en SQLite en memoria.
+- **Pedidos:** hidratación carga `order_payments` y `order_audits`; rutas admin
+  refrescan desde Turso y persisten con transición condicional (+ deltas de
+  stock); errores `409 ORDER_CONFLICT` y `503 PERSISTENCE_UNAVAILABLE`;
+  mutaciones admin (settings/rate/catálogo) se await-ean.
+- **Seguridad:** secreto `CORU_ABUSE_SECRET` (min 32); producción sin él falla
+  cerrado en pedidos WhatsApp; verificación de cookie en tiempo constante;
+  replay idempotente desde Turso antes del limiter; JWKS cacheado por issuer;
+  headers de seguridad + CSP report-only; tasa automática rechaza desviaciones
+  >25% frente a observación real <24 h.
+- **Analítica (D, local completa):** `src/shared/analytics-events.ts` es la
+  fuente única de nombres (cubierta por `tests/analytics-events.test.ts` vs
+  CHECK de 0006); KPI/timeline `whatsappIntents` cuentan pedidos creados en el
+  rango (cualquier status, día Caracas de `createdAt`); funnel
+  `whatsappSessions`/`whatsappPerAddPct` siguen por eventos; con Turso no se
+  hidrata analítica en memoria (POST escribe solo DB; admin carga por rango +
+  lookback 1 día y `loadSessionsAvailableFrom`); flush del cliente parte lotes
+  grandes; `loadOrders` acepta `CANCELLED`; pedidos admin en `localStorage`
+  solo en preview Vite local; `/privacidad` divulga visitor/sesión/retención/
+  cookie `coru_device` y datos de entrega. Verificación local: 212/212,
+  typecheck y build PASS.
 
 ## Última publicación — 21-09-2026
 

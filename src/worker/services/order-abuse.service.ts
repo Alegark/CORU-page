@@ -5,7 +5,18 @@ const DEVICE_MAX_AGE = 30 * 24 * 60 * 60
 const WINDOW_HOUR = 60 * 60 * 1000
 const WINDOW_DAY = 24 * WINDOW_HOUR
 
+export const LOCAL_DEVELOPMENT_ABUSE_SECRET = 'coru-local-development-secret'
+const MIN_ABUSE_SECRET_LENGTH = 32
+
 export type AbuseDecision = { allowed: true; deviceToken: string; setCookie?: string } | { allowed: false; code: 'ORDER_INTENT_RATE_LIMITED' | 'ORDER_INTENT_GUARD_UNAVAILABLE'; retryAfterSeconds?: number; deviceToken: string; setCookie?: string }
+
+/** Resolve the HMAC secret for the order-intent guard. Production fails closed when unset or too short. */
+export function resolveAbuseSecret(env?: { CORU_ABUSE_SECRET?: string; ENVIRONMENT?: string } | null): string | undefined {
+  const configured = env?.CORU_ABUSE_SECRET
+  if (typeof configured === 'string' && configured.length >= MIN_ABUSE_SECRET_LENGTH) return configured
+  if (env?.ENVIRONMENT === 'production') return undefined
+  return LOCAL_DEVELOPMENT_ABUSE_SECRET
+}
 
 function base64Url(bytes: ArrayBuffer | Uint8Array): string {
   const array = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
@@ -21,13 +32,17 @@ function fromBase64Url(value: string): Uint8Array | undefined {
   } catch { return undefined }
 }
 
+async function hmacKey(secret: string, usages: KeyUsage[]): Promise<CryptoKey> {
+  return crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, usages)
+}
+
 async function hmac(secret: string, value: string): Promise<string> {
-  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const key = await hmacKey(secret, ['sign'])
   return base64Url(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(value)))
 }
 
 async function digest(secret: string, value: string): Promise<string> {
-  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const key = await hmacKey(secret, ['sign'])
   return base64Url(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`digest:${value}`)))
 }
 
@@ -53,9 +68,14 @@ async function signedToken(secret: string): Promise<string> {
 async function validToken(secret: string, token: string | undefined): Promise<boolean> {
   if (!token) return false
   const [value, signature] = token.split('.')
-  if (!value || !signature || !fromBase64Url(value) || !fromBase64Url(signature)) return false
-  const expected = await hmac(secret, value)
-  return expected === signature
+  if (!value || !signature) return false
+  const signatureBytes = fromBase64Url(signature)
+  if (!signatureBytes || !fromBase64Url(value)) return false
+  try {
+    const key = await hmacKey(secret, ['verify'])
+    const signatureBuffer = Uint8Array.from(signatureBytes)
+    return await crypto.subtle.verify('HMAC', key, signatureBuffer, new TextEncoder().encode(value))
+  } catch { return false }
 }
 
 export async function ensureDeviceToken(request: Request, secret: string): Promise<{ token: string; setCookie?: string; valid: boolean }> {
@@ -93,8 +113,9 @@ function prune(state: CoruState, now: number): void {
  * Server-side order-intent guard. It stores only HMAC digests and reserves all
  * three rolling buckets before order creation. Idempotency replay is resolved by
  * the route before this function is called, so replay does not consume quota.
+ * Callers must pass `secret` explicitly (use `resolveAbuseSecret`).
  */
-export async function checkAndReserveOrderIntent(state: CoruState, request: Request, now = new Date(), secret = state.abuseSecret ?? 'coru-local-development-secret'): Promise<AbuseDecision> {
+export async function checkAndReserveOrderIntent(state: CoruState, request: Request, now = new Date(), secret: string | undefined): Promise<AbuseDecision> {
   if (!secret) return { allowed: false, code: 'ORDER_INTENT_GUARD_UNAVAILABLE', deviceToken: '' }
   const device = await ensureDeviceToken(request, secret)
   const ip = clientIp(request)

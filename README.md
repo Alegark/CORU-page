@@ -6,8 +6,9 @@ This repository is intentionally spec-driven.
 
 The current expansion keeps the v1 flow and specifies two explicit fulfillment
 paths: `STOCK` (available now) and `PREORDER` (bajo pedido). The documentation
-contract is recovered and expanded; implementation of this expansion is still
-pending. It does not add customer accounts or an online payment gateway.
+contract is recovered and expanded; the fulfillment expansion is implemented —
+see [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md). It does
+not add customer accounts or an online payment gateway.
 
 ## Read in this order
 
@@ -191,11 +192,9 @@ It does not store a customer measurement or present an unverified
 international-conversion table.
 
 ### Images
-- originals stored in R2
-- existing background-removal service used through provider abstraction
-- v1 adapter: Photoroom
-- processed result: square, centered, white background
-- admin approves processed or original
+- originals stored in R2 as uploaded (no automatic background removal)
+- first gallery image is the primary image; admin can reorder the gallery
+- Photoroom remains an optional legacy adapter only when `PHOTOROOM_API_KEY` is set; new uploads do not require it
 
 ### Admin auth
 - Cloudflare Access
@@ -225,11 +224,7 @@ Frontend
 React
 TypeScript
 Vite
-Tailwind CSS
-React Router
-TanStack Query
-React Hook Form
-Zod
+plain CSS tokens (custom router; no Tailwind / React Router / TanStack Query / RHF / Zod in the implemented stack)
 
 Backend
 Cloudflare Workers
@@ -238,7 +233,7 @@ Cloudflare Vite Plugin
 
 Data
 Turso / libSQL
-Drizzle ORM
+hand-written libSQL HTTP client + SQL migrations under drizzle/
 Cloudflare R2
 
 Security
@@ -246,14 +241,13 @@ Cloudflare Access
 jose JWT verification
 
 External adapters
-internal exchange-rate provider
-Photoroom image processing
+internal exchange-rate provider (EXCHANGE_RATE_URL relay in production)
+optional legacy Photoroom when PHOTOROOM_API_KEY is set
 Yummy quote adapter only after official contract/credentials; WhatsApp fallback otherwise
 
 Testing
 Vitest
 Testing Library
-Playwright
 ```
 
 ## Target routes
@@ -292,9 +286,8 @@ TURSO_DATABASE_URL
 TURSO_AUTH_TOKEN
 TEAM_DOMAIN
 POLICY_AUD
-PHOTOROOM_API_KEY
-DEVICE_TOKEN_SECRET
-ABUSE_HMAC_SECRET
+CORU_ABUSE_SECRET
+EXCHANGE_RATE_URL
 ```
 
 Cloudflare binding:
@@ -302,34 +295,53 @@ Cloudflare binding:
 R2 bucket for CORU media
 ```
 
+Optional / conditional:
+```text
+PHOTOROOM_API_KEY          # legacy image processing only; not required for new uploads
+YUMMY_ADAPTER_ENABLED      # false until official Yummy contract is validated
+YUMMY_API_URL              # server-side; only after official docs/credentials
+YUMMY_API_TOKEN            # Wrangler secret; only after official docs/credentials
+```
+
 Local-only optional:
 ```text
 DEV_ADMIN_BYPASS=true
 ```
 
-Never define that bypass in production.
+Never define that bypass in production. Before the next production deploy, set
+`CORU_ABUSE_SECRET` with `npx wrangler secret put CORU_ABUSE_SECRET` (minimum
+32 characters). Without it, production `POST /api/orders/whatsapp` fails closed
+with `503 ORDER_INTENT_GUARD_UNAVAILABLE`.
 
-The automatic exchange-rate provider reads Binance's official C2C VES/USDT quote through a server-side JSON endpoint and does not need a customer-visible API key. Production uses the operator-controlled, read-only relay configured in `EXCHANGE_RATE_URL` because direct Worker egress to Binance is restricted; the built-in Binance adapter remains the fallback for environments where direct access is allowed. Provider details stay server-side and are never returned by the public API.
+The automatic exchange-rate provider reads Binance's official C2C VES/USDT quote through a server-side JSON endpoint and does not need a customer-visible API key. Production uses the operator-controlled, read-only relay configured in `EXCHANGE_RATE_URL` because direct Worker egress to Binance is restricted; the built-in Binance adapter remains the fallback for environments where direct access is allowed. Provider details stay server-side and are never returned by the public API. A new automatic observation that deviates more than 25% from a real observation younger than 24 hours is rejected; the last valid rate is kept.
 
-No Yummy endpoint or secret name is assumed in this README. Those bindings are
-added only after current official onboarding documentation and available
-credentials confirm the real contract; the non-blocking WhatsApp fallback does
-not require them.
+Yummy bindings (`YUMMY_*`) match [`docs/OPERATIONS.md`](docs/OPERATIONS.md): the
+non-blocking WhatsApp fallback does not require them; live quoting stays off
+until official onboarding docs and credentials confirm the contract.
 
-The Worker Cron entry point runs every 10 minutes when the rate mode is automatic and sweeps overdue pending orders every 15 minutes; order reads/actions also enforce the exact 72-hour threshold before doing anything else. Invalid provider responses keep the last valid rate. When `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are present, the Worker hydrates the isolate from Turso and schedules writes for orders, inventory, settings, rates, images and analytics; without them it stays in the local in-memory adapter. Device/IP abuse counters are server-only, HMAC-keyed and expire within 24 hours.
+The Worker Cron trigger is a single schedule `*/10 * * * *` (`wrangler.jsonc`).
+The same handler refreshes the automatic rate (when mode is automatic), sweeps
+overdue pending orders, and runs analytics retention cleanup. Order
+reads/actions also enforce the exact 72-hour threshold before doing anything
+else. Invalid provider responses keep the last valid rate. When
+`TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are present, the Worker hydrates the
+isolate from Turso and persists orders, inventory, settings, rates, images and
+analytics; without them it stays in the local in-memory adapter. Device/IP
+abuse counters are server-only, HMAC-keyed via `CORU_ABUSE_SECRET` and expire
+within 24 hours.
 
 Operational setup and the environment publication order live in [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 
 ## Commands
 
-After Task 1 scaffold:
+SPEC names `pnpm` as the package manager. When pnpm is not installed, the same
+scripts work with npm (`npm install`, `npm run dev`, `npm test`, …).
 
 ```bash
 pnpm install
 pnpm dev
 pnpm typecheck
 pnpm test
-pnpm test:e2e
 pnpm build
 pnpm preview
 pnpm worker:dev
@@ -338,12 +350,9 @@ pnpm worker:dry-run
 pnpm db:migrate # requiere TURSO_DATABASE_URL y TURSO_AUTH_TOKEN
 ```
 
-The Playwright golden-flow source is kept under `tests/e2e/` and the runner is
-included in `devDependencies`. Install its Chromium binary once with
-`pnpm exec playwright install chromium`. The default command starts Vite and
-verifies the local Store/Admin flow; set `CORU_E2E_URL` when targeting a
-deployed Worker. If the runner or browser is unavailable, `pnpm test:e2e`
-reports an explicit environment-only skip.
+There is no browser E2E suite: Playwright/Chromium was removed on 24-09-2026.
+Verification is Vitest + Testing Library, `pnpm build`, `pnpm worker:dry-run`
+and the post-deploy `pnpm smoke:production` against Cloudflare.
 
 `pnpm worker:dev` starts the Hono Worker locally on port 8787 with local
 bindings. `pnpm worker:types` checks the generated Wrangler bindings and

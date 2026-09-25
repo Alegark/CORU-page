@@ -9,7 +9,7 @@ export function FloatingCart({ itemCount, open, onCart }: { itemCount: number; o
     let timer: number | undefined
     if (itemCount > previousCount.current) {
       setReceiving(true)
-      timer = window.setTimeout(() => setReceiving(false), 500)
+      timer = window.setTimeout(() => setReceiving(false), 180)
     } else if (itemCount <= previousCount.current) {
       setReceiving(false)
     }

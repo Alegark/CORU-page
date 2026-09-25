@@ -450,6 +450,27 @@ Initial example:
 3 ANILLOS POR $10
 ```
 
+For the three-piece bundle, keep the black card and one mint price badge plus
+heading (`Elige 3 piezas y paga menos.` / `¡Combo listo!`). Three ring slots
+(64px desktop / 54px mobile, 26px / 22px connectors) replace the continuous bar:
+empty slots show a numbered outline; filled slots show the thumbnail of each
+eligible ring in the current group (white disc, mint 3px border). The third
+slot gets a mint check chip when the group is full, with a 320ms pop animation
+and reduced-motion fallback. Keep the indicator compact rather than stretching
+it across the card. Desktop: copy on the left, slots + status + action in a
+right column (`.promo-play`). Below 768px everything stacks and the action is
+full width. Card height follows content. Use the existing brand tokens.
+
+The status reflects eligible STOCK units only. For N units, completed bundles
+are `floor(N / 3)` and the next bundle uses `N % 3`; an exact multiple of three
+shows all three steps completed. Copy is `Elige tus primeros 3 anillos` at zero,
+`Te faltan 2 piezas` at one, `Te falta 1 pieza` at two, `1 combo aplicado` at
+three, then the applied count plus remaining pieces for the next group. Never
+show `5 de 3`. Before completion the action browses eligible rings; from the
+third unit it says `Ver carrito` and opens the existing cart. The visual steps
+are decorative; expose one semantic progressbar and a polite status message.
+Other promotion formats retain their existing presentation.
+
 ## PromoProgress
 
 Shows progress toward the bundle.

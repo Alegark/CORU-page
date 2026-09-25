@@ -1,3 +1,4 @@
+import { ANALYTICS_EVENT_NAMES } from './analytics-events'
 import type { AnalyticsEvent, CartLine, Currency, ShippingSelection } from './types'
 
 type ValidationSuccess<T> = { ok: true; value: T }
@@ -70,8 +71,8 @@ export function parseOrderIntentInput(input: unknown): ValidationResult<{ lines:
   return { ok: true, value: { lines, currency: currency as Currency, ...(typeof rateMicros === 'number' ? { rateMicros } : {}), ...(shipping !== undefined ? { shipping } : {}), ...(typeof sessionId === 'string' ? { sessionId: sessionId.trim() } : {}), ...(typeof source === 'string' ? { source: source.trim().slice(0, 40) || 'directo' } : {}) } }
 }
 
-const analyticsNames = new Set(['catalog_view', 'product_view', 'cart_add', 'order_intent', 'order_confirmed', 'size_guide_view', 'shipping_method_selected', 'yummy_quote_requested', 'yummy_quote_succeeded', 'yummy_quote_failed', 'preorder_intent_created', 'preorder_deposit_recorded', 'preorder_ready', 'preorder_completed'])
-const analyticsPropertyKeys = new Set(['productId', 'productName', 'category', 'promoEligible', 'fulfillment_type', 'unitPriceCents', 'quantityDelta', 'device', 'visitorId', 'productCount', 'promoApplied', 'currency', 'orderReference', 'method', 'shipping_method', 'carrier', 'amountMinor', 'status', 'stage'])
+const analyticsNames = new Set<string>(ANALYTICS_EVENT_NAMES)
+const analyticsPropertyKeys = new Set(['productId', 'productName', 'category', 'promoEligible', 'fulfillment_type', 'unitPriceCents', 'quantityDelta', 'device', 'visitorId', 'productCount', 'promoApplied', 'currency', 'orderReference', 'method', 'shipping_method', 'carrier', 'amountMinor', 'status', 'stage', 'sessionModel'])
 const forbiddenKeys = new Set(['name', 'phone', 'email', 'address', 'message', 'customertext', 'customer_text', 'coordinates', 'latitude', 'longitude', 'paymentnote', 'payment_note', 'ip', 'token'])
 
 export function parseAnalyticsInput(input: unknown): ValidationResult<{ events: AnalyticsEvent[] }> {

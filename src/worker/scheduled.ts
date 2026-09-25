@@ -1,9 +1,9 @@
 import type { CoruBindings } from './env'
-import { createHttpRateProvider, refreshRate } from './services/exchange-rate.service'
-import { createBinanceP2pProvider } from './services/exchange-rate/binance-p2p.adapter'
+import { refreshRate } from './services/exchange-rate.service'
+import { createAutomaticRateProvider } from './services/automatic-rate-provider'
 import { purgeAnalytics } from './services/analytics.service'
 import { state } from './state'
-import { ensureStateHydrated, persistRate, purgePersistedAnalytics, persistOrderStatus } from './persistence'
+import { captureOrderExpectation, ensureStateHydrated, hydrateOrdersFromDatabase, persistOrderTransition, persistRate, persistRateRefreshStatus, purgePersistedAnalytics } from './persistence'
 import { expirePendingOrders } from './services/order.service'
 
 type ScheduledEventLike = { scheduledTime?: number }
@@ -22,19 +22,42 @@ export async function scheduled(event: ScheduledEventLike, env: CoruBindings, ct
     return
   }
   const purged = purgeAnalytics(state, now)
-  const expired = expirePendingOrders(state, now)
-  if (database && expired.length) {
-    for (const order of expired) ctx.waitUntil?.(persistOrderStatus(database, order, state).catch(() => undefined))
-  }
+
+  const expireWork = (async () => {
+    if (database) await hydrateOrdersFromDatabase(state, database)
+    const pending = state.orders.filter((order) => order.status === 'PENDING')
+    const expectations = new Map(pending.map((order) => [order.id, captureOrderExpectation(order)]))
+    const expired = expirePendingOrders(state, now)
+    if (!database || !expired.length) return
+    for (const order of expired) {
+      const expected = expectations.get(order.id) ?? { status: 'PENDING' as const, preorderStage: null, paymentStatus: null }
+      try {
+        const result = await persistOrderTransition(database, order, expected, [])
+        if (!result.applied) await hydrateOrdersFromDatabase(state, database)
+      } catch (error) {
+        console.error('Scheduled order expiry persistence failed', error)
+        await hydrateOrdersFromDatabase(state, database).catch((hydrateError) => {
+          console.error('Scheduled order rehydrate after expiry failure failed', hydrateError)
+        })
+      }
+    }
+  })()
+  if (ctx.waitUntil) ctx.waitUntil(expireWork)
+  else await expireWork
+
   if (database && purged > 0) {
     const cutoff = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000).toISOString()
-    if (ctx.waitUntil) ctx.waitUntil(purgePersistedAnalytics(database, cutoff).catch(() => undefined))
+    if (ctx.waitUntil) ctx.waitUntil(purgePersistedAnalytics(database, cutoff).catch((error) => { console.error('Scheduled analytics purge failed', error) }))
   }
   if (state.rateMode !== 'AUTOMATIC') return
-  const provider = env.EXCHANGE_RATE_URL ? createHttpRateProvider(env.EXCHANGE_RATE_URL) : createBinanceP2pProvider()
-  const refresh = refreshRate(state, provider, now)
-  const result = await refresh
-  if (ctx.waitUntil) {
-    ctx.waitUntil(Promise.resolve(result).then((value) => value.updated && database ? persistRate(database, state) : undefined).catch(() => undefined))
+  const provider = createAutomaticRateProvider(env.EXCHANGE_RATE_URL)
+  const result = await refreshRate(state, provider, now)
+  if (database) {
+    const persistence = Promise.all([
+      ...(result.updated ? [persistRate(database, state)] : []),
+      persistRateRefreshStatus(database, state),
+    ]).catch((error) => { console.error('Automatic exchange-rate status persistence failed', error) })
+    if (ctx.waitUntil) ctx.waitUntil(persistence)
+    else await persistence
   }
 }

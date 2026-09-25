@@ -1,10 +1,15 @@
 export type ImageProcessingStatus = 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED'
 
+export type ImageVariant = 'thumb-320' | 'thumb-640' | 'detail-1200' | 'og-1200'
+
 export type ProductImageRecord = {
   id: string
   productId: string
   originalKey: string
   processedKey?: string
+  thumb320Key?: string
+  thumb640Key?: string
+  detail1200Key?: string
   mimeType: 'image/jpeg' | 'image/png' | 'image/webp'
   byteSize: number
   sortOrder: number
@@ -18,6 +23,7 @@ export type ProductImageRecord = {
 export type ImageStorage = {
   put: (key: string, body: ArrayBuffer | Uint8Array, options?: { contentType?: string }) => Promise<void>
   get?: (key: string) => Promise<ArrayBuffer | null>
+  delete?: (key: string) => Promise<void>
 }
 
 export type ImageProcessingProvider = {
@@ -57,6 +63,21 @@ function validateUploadInput(mimeType: string, body: ArrayBuffer): void {
 
 function imageKey(productId: string, imageId: string, mimeType: ProductImageRecord['mimeType']): string {
   return `products/${productId}/original/${imageId}.${MIME_TO_EXTENSION[mimeType]}`
+}
+
+/** Deterministic derivative keys let the public route fall back safely while
+ * a backfill is still running and make retries overwrite only the same
+ * immutable-by-image-id object. */
+export function imageVariantKey(productId: string, imageId: string, variant: ImageVariant): string {
+  const extension = variant === 'og-1200' ? 'jpg' : 'webp'
+  return `products/${productId}/variants/${imageId}/${variant}.${extension}`
+}
+
+export function imageVariantKeyFor(record: ProductImageRecord, variant: ImageVariant): string {
+  if (variant === 'og-1200') return imageVariantKey(record.productId, record.id, variant)
+  if (variant === 'thumb-320') return record.thumb320Key ?? imageVariantKey(record.productId, record.id, variant)
+  if (variant === 'thumb-640') return record.thumb640Key ?? imageVariantKey(record.productId, record.id, variant)
+  return record.detail1200Key ?? imageVariantKey(record.productId, record.id, variant)
 }
 
 /** Stores the upload exactly as provided; no background removal or derivative is created. */
@@ -122,6 +143,7 @@ export async function processProductImage(options: {
     const processed = await options.provider.process({ body, mimeType: options.mimeType as ProductImageRecord['mimeType'] })
     if (processed.byteLength <= 0) throw new Error('empty processed image')
     await options.storage.put(processedKey, processed, { contentType: 'image/webp' })
+    record.detail1200Key = processedKey
     record.processingStatus = 'READY'
     record.updatedAt = new Date().toISOString()
   } catch {
@@ -164,6 +186,7 @@ export async function retryProductImage(options: {
     if (processed.byteLength > MAX_BYTES) throw new Error('processed image too large')
     if (!record.processedKey) record.processedKey = `products/${record.productId}/processed/${record.id}.webp`
     await options.storage.put(record.processedKey, processed, { contentType: 'image/webp' })
+    record.detail1200Key = record.processedKey
     record.processingStatus = 'READY'
     record.updatedAt = new Date().toISOString()
   } catch {
@@ -179,7 +202,10 @@ export function approveImage(record: ProductImageRecord, variant: 'original' | '
   // v1 stores approval as a boolean. Dropping the derivative key when the
   // operator chooses the original preserves that choice across hydration
   // without exposing a private storage key or requiring a destructive delete.
-  if (variant === 'original') delete record.processedKey
+  if (variant === 'original') {
+    delete record.processedKey
+    delete record.detail1200Key
+  }
   record.approvedVariant = variant
   record.updatedAt = new Date().toISOString()
   return record

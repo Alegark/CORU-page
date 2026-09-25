@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { approveImage, ImageServiceError, processProductImage, reorderProductImages, retryProductImage, uploadProductImage, type ImageProcessingProvider, type ImageStorage } from '../src/worker/services/image.service'
+import { approveImage, imageVariantKey, ImageServiceError, processProductImage, reorderProductImages, retryProductImage, uploadProductImage, type ImageProcessingProvider, type ImageStorage } from '../src/worker/services/image.service'
 
 function storage() {
   const objects = new Map<string, ArrayBuffer>()
@@ -13,6 +13,13 @@ function storage() {
 const okProvider: ImageProcessingProvider = { process: async () => new Uint8Array([1, 2, 3]).buffer }
 
 describe('product image pipeline', () => {
+  it('uses deterministic immutable keys for responsive derivatives', () => {
+    expect(imageVariantKey('orbita-oscura', 'image-1', 'thumb-320')).toBe('products/orbita-oscura/variants/image-1/thumb-320.webp')
+    expect(imageVariantKey('orbita-oscura', 'image-1', 'thumb-640')).toBe('products/orbita-oscura/variants/image-1/thumb-640.webp')
+    expect(imageVariantKey('orbita-oscura', 'image-1', 'detail-1200')).toBe('products/orbita-oscura/variants/image-1/detail-1200.webp')
+    expect(imageVariantKey('orbita-oscura', 'image-1', 'og-1200')).toBe('products/orbita-oscura/variants/image-1/og-1200.jpg')
+  })
+
   it('stores a normal upload as the approved original without invoking a processor', async () => {
     const target = storage()
     const record = await uploadProductImage({ productId: 'orbita-oscura', body: new Uint8Array([1, 2]), mimeType: 'image/png', sortOrder: 2, storage: target.adapter, now: new Date('2026-09-20T12:00:00.000Z') })

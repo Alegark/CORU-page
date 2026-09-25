@@ -8,7 +8,9 @@ Mandatory reading order (from the repository root):
 3. doc/SPEC_PLAN.md
 4. docs/superpowers/plans/2026-09-18-coru-cart-shipping-subpanel.md
 5. README.md
-6. design/CORU_Design_System_v1.html
+6. PROJECT_CONTEXT.md
+7. docs/OPERATIONS.md
+8. design/CORU_Design_System_v1.html
 
 Do not treat the HTML prototype as business logic. New Orders/Inventory/Rate-lock requirements in doc/SPEC.md and design/DESIGN.md override older prototype omissions.
 

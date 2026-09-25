@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerE
 import { Icon, icons } from '../ui/Icon'
 import { formatCurrencyAmount, formatUsd, quoteCart } from '../../../shared/commerce'
 import { createOrderIntent } from '../../../shared/orders'
+import { formatProductSizeLabel } from '../../../shared/ring-size'
 import type { Order, Product, ShippingMethod, ShippingSelection, PersonalDeliveryPoint } from '../../../shared/types'
 import { useCart } from '../../features/cart/CartContext'
 import { RingArtwork } from './RingArtwork'
@@ -10,12 +11,7 @@ import { ApiClientError, fetchPersonalDeliveryPoints } from '../../api/public'
 import { createOrderIntentRemote } from '../../features/orders/orderIntent'
 import { ShippingPanel } from './ShippingPanel'
 import { defaultPersonalDeliveryPoints } from '../../../shared/delivery-points'
-
-function isVitePreview(): boolean {
-  const hostname = window.location.hostname
-  const port = window.location.port
-  return (hostname === 'localhost' || hostname === '127.0.0.1') && (port === '' || port === '4173' || port === '4174')
-}
+import { isVitePreview } from '../../../shared/vite-preview'
 
 function readDurationMs(variable: string, fallback: number): number {
   const raw = getComputedStyle(document.documentElement).getPropertyValue(variable).trim()
@@ -26,7 +22,7 @@ function readDurationMs(variable: string, fallback: number): number {
   return value * (match[2]?.toLowerCase() === 's' ? 1000 : 1)
 }
 
-export function CartOverlay({ products, open, onClose, onOrderCreated, rateMicros = 36_420_000, rateAvailable = true }: { products: Product[]; open: boolean; onClose: () => void; onOrderCreated: (order: Order) => void; rateMicros?: number | null; rateAvailable?: boolean }) {
+export function CartOverlay({ products, open, onClose, onOrderCreated, rateMicros = null, rateAvailable = false }: { products: Product[]; open: boolean; onClose: () => void; onOrderCreated: (order: Order) => void; rateMicros?: number | null; rateAvailable?: boolean }) {
   const { lines, currency, setQuantity, remove, clear, itemCount, promotion } = useCart()
   const [mounted, setMounted] = useState(open)
   const [animationState, setAnimationState] = useState<'closed' | 'open' | 'closing'>('closed')
@@ -248,7 +244,7 @@ export function CartOverlay({ products, open, onClose, onOrderCreated, rateMicro
               {visibleLines.map(({ product, quantity }) => (
                 <div className="cart-line" key={product.id}>
                   <div className="cart-line-art"><RingArtwork artwork={product.artwork} label={product.name} imageUrl={product.imageUrl} /></div>
-                  <div className="cart-line-main"><h3>{product.name}</h3><p>{product.sizeLabel} · {displayAmount(product.priceCents)}</p>{(product.fulfillmentType ?? 'STOCK') === 'PREORDER' && <span className="cart-fulfillment-label">Bajo pedido · 3–4 semanas</span>}<div className="quantity-stepper" aria-label={`Cantidad de ${product.name}`}><button type="button" onClick={() => setQuantity(product.id, quantity - 1)} aria-label={`Quitar una unidad de ${product.name}`}><Icon icon={icons.minus} /></button><span>{quantity}</span><button type="button" onClick={() => setQuantity(product.id, (product.fulfillmentType ?? 'STOCK') === 'PREORDER' ? quantity + 1 : Math.min(product.stockQuantity, quantity + 1))} aria-label={`Añadir una unidad de ${product.name}`}><Icon icon={icons.plus} /></button></div></div>
+                  <div className="cart-line-main"><h3>{product.name}</h3><p>{formatProductSizeLabel(product)} · {displayAmount(product.priceCents)}</p>{(product.fulfillmentType ?? 'STOCK') === 'PREORDER' && <span className="cart-fulfillment-label">Bajo pedido · 3–4 semanas</span>}<div className="quantity-stepper" aria-label={`Cantidad de ${product.name}`}><button type="button" onClick={() => setQuantity(product.id, quantity - 1)} aria-label={`Quitar una unidad de ${product.name}`}><Icon icon={icons.minus} /></button><span>{quantity}</span><button type="button" onClick={() => setQuantity(product.id, (product.fulfillmentType ?? 'STOCK') === 'PREORDER' ? quantity + 1 : Math.min(product.stockQuantity, quantity + 1))} aria-label={`Añadir una unidad de ${product.name}`}><Icon icon={icons.plus} /></button></div></div>
                   <div className="cart-line-side"><strong>{displayAmount(product.priceCents * quantity)}</strong><button className="cart-line-remove" type="button" onClick={() => remove(product.id)} aria-label={`Quitar ${product.name} del carrito`} title="Quitar del carrito"><Icon icon={icons.trash} aria-hidden="true" /></button></div>
                 </div>
               ))}
@@ -270,6 +266,7 @@ export function CartOverlay({ products, open, onClose, onOrderCreated, rateMicro
               {quote.appliedPromotion && <div className="cart-promo"><Icon icon={icons.bolt} /><span><strong>Promo aplicada</strong><small>{quote.appliedPromotion.name} · {quote.appliedPromotion.groupsApplied} aplicación{quote.appliedPromotion.groupsApplied > 1 ? 'es' : ''}</small></span><strong>−{displayAmount(quote.discountCents)}</strong></div>}
               <div className="totals"><span>Subtotal <strong>{displayAmount(quote.subtotalCents)}</strong></span>{quote.discountCents > 0 && <span>Descuento <strong className="discount">−{displayAmount(quote.discountCents)}</strong></span>}<span className="total-row">Total <strong>{displayAmount(quote.totalCents)}</strong></span>{currency === 'Bs' && usableRate && <span className="bs-total">≈ USD {formatUsd(quote.totalCents)}</span>}</div>
               <button className={`button button-primary whatsapp-cta${hasStock && !shippingMethod ? ' is-blocked' : ''}`} type="button" disabled={creating} aria-disabled={hasStock && !shippingMethod ? 'true' : 'false'} onClick={handleWhatsAppClick}><Icon icon={icons.whatsapp} />{creating ? 'Creando pedido…' : 'Pedir por WhatsApp'}</button>
+              <p className="cart-whatsapp-helper">Se abrirá WhatsApp con tu pedido listo para confirmar.</p>
             </div>
           </>
         )}

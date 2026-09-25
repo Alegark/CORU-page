@@ -1,39 +1,13 @@
-import { useEffect, useRef } from 'react'
 import { Brand } from '../../components/brand/Brand'
 import { Icon, icons } from '../../components/ui/Icon'
-import { navigate } from '../../app/router'
-import { analytics } from '../../analytics/client'
-
-const ringMethodSteps = [
-  'Coloca un anillo que te quede bien sobre una regla.',
-  'Mide el diámetro interior del anillo, de borde interno a borde interno, en línea recta.',
-  'Anota la medida en milímetros y compárala con la tabla de tallas.',
-]
-
-const fingerMethodSteps = [
-  'Prepara una tira de papel, hilo o cinta no elástica.',
-  'Rodea la base del dedo donde usarás el anillo.',
-  'Marca donde se une la tira y estírala.',
-  'Mide esa longitud en milímetros con una regla.',
-  'Compárala con la tabla de tallas.',
-]
-
-const sizeRows = [
-  ['5', '15.7 mm', '49.3 mm'],
-  ['6', '16.5 mm', '51.9 mm'],
-  ['7', '17.3 mm', '54.4 mm'],
-  ['8', '18.1 mm', '57.0 mm'],
-  ['9', '18.9 mm', '59.5 mm'],
-  ['10', '19.8 mm', '62.1 mm'],
-] as const
+import { Link } from '../../components/ui/Link'
+import { SIZE_GUIDE_FINGER_STEPS, SIZE_GUIDE_RING_STEPS, SIZE_GUIDE_ROWS } from '../../../shared/size-guide'
 
 export function SizeGuidePage() {
-  const tracked = useRef(false)
-  useEffect(() => { if (tracked.current) return; tracked.current = true; analytics.track('size_guide_view') }, [])
   return <div className="simple-page app-shell size-guide-page">
     <header className="simple-header page-container size-guide-header">
       <Brand />
-      <button className="button button-ghost size-guide-back" type="button" onClick={() => navigate('/')}>Volver a la colección</button>
+      <Link className="button button-ghost size-guide-back" href="/">Volver a la colección</Link>
     </header>
     <main id="main-content" className="page-container guide-content">
       <section className="size-guide-hero" aria-labelledby="size-guide-title">
@@ -55,7 +29,7 @@ export function SizeGuidePage() {
             <img className="size-guide-method-image" src="/coru-medir-anillo.png" alt="Anillo CORU sobre una regla para medir el diámetro interior." />
           </div>
           <ol className="size-guide-steps">
-            {ringMethodSteps.map((step, index) => <li key={step}><span className="size-guide-step-number" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span><p>{step}</p></li>)}
+            {SIZE_GUIDE_RING_STEPS.map((step, index) => <li key={step}><span className="size-guide-step-number" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span><p>{step}</p></li>)}
           </ol>
         </div>
         <aside className="size-guide-callout" role="note"><Icon icon={icons.info} aria-hidden="true" /><p>No midas el borde exterior, solo el espacio interno del anillo.</p></aside>
@@ -71,7 +45,7 @@ export function SizeGuidePage() {
               <img src="/coru-medir-dedo.svg" alt="Medición de la circunferencia del dedo con una tira y una regla." />
             </figure>
             <ol className="size-guide-finger-steps">
-              {fingerMethodSteps.map((step, index) => <li key={step}><span className="size-guide-step-number" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span><p>{step}</p></li>)}
+              {SIZE_GUIDE_FINGER_STEPS.map((step, index) => <li key={step}><span className="size-guide-step-number" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span><p>{step}</p></li>)}
             </ol>
           </div>
       </section>
@@ -82,11 +56,11 @@ export function SizeGuidePage() {
           <div className="size-guide-table-scroll">
             <table>
               <caption className="sr-only">Tallas de anillo CORU en sistema US, diámetro interior y circunferencia.</caption>
-              <thead><tr><th scope="col">Talla US</th><th scope="col">Diámetro interior</th><th scope="col">Circunferencia</th></tr></thead>
-              <tbody>{sizeRows.map(([size, diameter, circumference]) => <tr key={size}><th scope="row">{size}</th><td>{diameter}</td><td>{circumference}</td></tr>)}</tbody>
+              <thead><tr><th scope="col">Talla US</th><th scope="col">Diámetro interior (cm)</th><th scope="col">Circunferencia (cm)</th></tr></thead>
+              <tbody>{SIZE_GUIDE_ROWS.map(([size, diameter, circumference]) => <tr key={size}><th scope="row">{size}</th><td>{diameter}</td><td>{circumference}</td></tr>)}</tbody>
             </table>
           </div>
-          <p className="size-guide-table-note">Todas las medidas están expresadas en milímetros.</p>
+          <p className="size-guide-table-note">Todas las medidas están expresadas en centímetros.</p>
         </div>
       </section>
 
@@ -100,8 +74,8 @@ export function SizeGuidePage() {
       </section>
 
       <section className="size-guide-help" aria-labelledby="size-guide-help-title">
-        <div><span className="eyebrow">¿Necesitas ayuda?</span><h2 id="size-guide-help-title">Si aún tienes dudas, escríbenos y te ayudamos a elegir tu talla.</h2></div>
-        <button className="button button-primary" type="button" onClick={() => navigate('/')}>Volver a la tienda <Icon icon={icons.arrowRight} aria-hidden="true" /></button>
+        <div><span className="eyebrow">¿Necesitas ayuda?</span><h2 id="size-guide-help-title">Si aún tienes dudas, escríbenos y te ayudamos a elegir tu talla.</h2><p className="size-guide-help-links"><Link href="/anillos">Ver anillos</Link> · <Link href="/entregas-maracaibo">Entregas en Maracaibo</Link></p></div>
+        <Link className="button button-primary" href="/">Volver a la tienda <Icon icon={icons.arrowRight} aria-hidden="true" /></Link>
       </section>
     </main>
   </div>

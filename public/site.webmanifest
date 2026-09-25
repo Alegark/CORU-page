@@ -1,0 +1,15 @@
+{
+  "name": "CORU",
+  "short_name": "CORU",
+  "description": "Anillos y accesorios en Maracaibo · Envíos a toda Venezuela",
+  "start_url": "/",
+  "display": "browser",
+  "background_color": "#FFFFFF",
+  "theme_color": "#39F79B",
+  "lang": "es-VE",
+  "icons": [
+    { "src": "/favicon-48.png", "sizes": "48x48", "type": "image/png", "purpose": "any" },
+    { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any" },
+    { "src": "/brand/coru-mascot.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

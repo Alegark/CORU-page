@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { demoProducts } from '../src/shared/catalog'
-import { convertUsdCentsToBs, formatCurrencyAmount, quoteCart } from '../src/shared/commerce'
+import { convertUsdCentsToBs, formatCurrencyAmount, isEligibleBundleProduct, quoteCart } from '../src/shared/commerce'
 
 describe('CORU commerce quote', () => {
   it.each([
@@ -22,6 +22,14 @@ describe('CORU commerce quote', () => {
     const result = quoteCart([{ productId: 'orbita-oscura', quantity: 3 }, { productId: 'cadena-mini', quantity: 1 }], demoProducts)
     expect(result.totalCents).toBe(1700)
     expect(result.discountCents).toBe(200)
+  })
+
+  it('shares bundle eligibility with the storefront indicator', () => {
+    expect(isEligibleBundleProduct(demoProducts[0], undefined)).toBe(true)
+    expect(isEligibleBundleProduct(demoProducts[6], undefined)).toBe(false)
+    expect(isEligibleBundleProduct({ ...demoProducts[5], promoEligible: true }, undefined)).toBe(false)
+    expect(isEligibleBundleProduct(undefined, undefined)).toBe(false)
+    expect(isEligibleBundleProduct(demoProducts[0], null)).toBe(false)
   })
 
   it('converts USD cents with half-up rounding', () => {

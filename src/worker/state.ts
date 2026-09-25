@@ -50,6 +50,8 @@ export type CoruState = {
   /** Distinguishes the approved bootstrap rate from a database observation. */
   rateSource: 'DEFAULT' | 'PERSISTED'
   rateValidUntil: string
+  rateRefreshAttemptedAt: string | null
+  rateRefreshError: string | null
 }
 
 const initialRate = 36_420_000
@@ -87,6 +89,8 @@ export const state: CoruState = {
   rateMode: 'AUTOMATIC',
   rateSource: 'DEFAULT',
   rateValidUntil: initialRateExpiry(),
+  rateRefreshAttemptedAt: null,
+  rateRefreshError: null,
 }
 
 export function resetState(): void {
@@ -109,5 +113,7 @@ export function resetState(): void {
   state.rateMode = 'AUTOMATIC'
   state.rateSource = 'DEFAULT'
   state.rateValidUntil = initialRateExpiry()
+  state.rateRefreshAttemptedAt = null
+  state.rateRefreshError = null
   clearHydrationCache(state)
 }

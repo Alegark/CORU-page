@@ -122,9 +122,12 @@ svg {
   padding: 0 18px;
   border: 1px solid transparent;
   border-radius: 18px;
+  color: inherit;
   font-size: 0.9rem;
   font-weight: 800;
   line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
   transition: transform var(--motion-fast) var(--ease-coru), background var(--motion-fast) var(--ease-coru), border-color var(--motion-fast) var(--ease-coru), color var(--motion-fast) var(--ease-coru);
 }
 

@@ -20,7 +20,8 @@
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
-    "not_found_handling": "single-page-application"
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/*", "!/assets/*", "!/brand/*"]
   },
   "routes": [
     { "pattern": "coru.systems", "custom_domain": true }

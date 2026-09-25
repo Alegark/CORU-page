@@ -1,14 +1,20 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { resolveRoute, type Route } from './router'
 import { CartProvider } from '../features/cart/CartContext'
 import { StorePage } from '../features/catalog/StorePage'
 import { ProductPage } from '../features/catalog/ProductPage'
 import { PrivacyPage } from '../features/catalog/PrivacyPage'
 import { SizeGuidePage } from '../features/catalog/SizeGuidePage'
+import { DeliveryPage } from '../features/catalog/DeliveryPage'
 import type { AdminSection } from '../features/admin/AdminShell'
-import { getProductBySlug } from '../../shared/catalog'
+import { getProductBySlug, getPublicProducts } from '../../shared/catalog'
 import { demoProducts } from '../../shared/catalog'
+import { ALL_RINGS_COLLECTION, allRingProducts, getCollectionDefinition, isCollectionPublished, productsForCollection } from '../../shared/collections'
 import { loadOrders, saveOrders } from '../../shared/storage'
+import { isVitePreview } from '../../shared/vite-preview'
+import { applyDocumentSeo, buildSeoMeta, publishedCollections } from '../../shared/seo'
+import { analytics } from '../analytics/client'
+import { createPageViewTracker } from '../analytics/page-view'
 import type { Order, Product } from '../../shared/types'
 import type { PublicProduct, PublicPromotion } from '../../shared/contracts'
 import { ApiClientError, fetchActivePromotion, fetchCatalog, fetchPublicCategories } from '../api/public'
@@ -26,12 +32,6 @@ const defaultPublicCategories: Category[] = [
   { id: 'cat-accesorios', slug: 'accesorios', name: 'Accesorios', sortOrder: 2, active: true },
 ]
 
-function isVitePreview(): boolean {
-  const hostname = window.location.hostname
-  const port = window.location.port
-  return (hostname === 'localhost' || hostname === '127.0.0.1') && (port === '' || port === '4173' || port === '4174')
-}
-
 function catalogErrorMessage(error: unknown): string {
   if (error instanceof ApiClientError && error.code === 'NETWORK_ERROR') return 'No pudimos cargar la colección. Comprueba tu conexión e inténtalo de nuevo.'
   return 'No pudimos cargar la colección. Inténtalo de nuevo.'
@@ -46,6 +46,10 @@ function toClientProduct(product: PublicProduct, promotion: PublicPromotion | nu
   return { ...product, stockQuantity: 100, active: true, primaryImageApproved: true, promoEligible: product.promotionEligible ?? Boolean(promotion && (!promotion.targetCategory || product.category === promotion.targetCategory)) }
 }
 
+function isPublicCatalogRoute(route: Route): boolean {
+  return route.kind === 'home' || route.kind === 'product' || route.kind === 'collection'
+}
+
 function useRoute(): Route {
   const [route, setRoute] = useState<Route>(() => resolveRoute(window.location.pathname))
   useEffect(() => {
@@ -58,6 +62,10 @@ function useRoute(): Route {
 
 export function App() {
   const route = useRoute()
+  const pageViewTracker = useRef<ReturnType<typeof createPageViewTracker> | null>(null)
+  pageViewTracker.current ??= createPageViewTracker((name, properties) => analytics.track(name, properties))
+  const previousRouteKind = useRef(route.kind)
+  const enteredPublicFromAdmin = previousRouteKind.current === 'admin' && isPublicCatalogRoute(route)
   const localPreview = isVitePreview()
   const [products, setProducts] = useState<Product[]>(() => localPreview ? demoProducts : [])
   const [orders, setOrders] = useState<Order[]>(() => localPreview ? loadOrders() : [])
@@ -66,9 +74,79 @@ export function App() {
   const [catalogLoading, setCatalogLoading] = useState(() => !localPreview)
   const [catalogError, setCatalogError] = useState<string | null>(null)
   const [catalogAttempt, setCatalogAttempt] = useState(0)
+  const product = route.kind === 'product' ? getProductBySlug(products, route.slug) : undefined
+  const adminSection = route.kind === 'admin' ? route.section as AdminSection : 'dashboard'
+  const publicCatalog = useMemo(() => getPublicProducts(products), [products])
+
+  const collectionView = useMemo(() => {
+    if (route.kind !== 'collection') return null
+    if (route.slug) {
+      const definition = getCollectionDefinition(route.slug)
+      if (!definition) return { missing: true as const }
+      const matched = productsForCollection(publicCatalog, definition)
+      if (!isCollectionPublished(matched.length)) return { missing: true as const }
+      return { missing: false as const, view: { slug: definition.slug, h1: definition.h1, intro: definition.intro, products: matched } }
+    }
+    const rings = allRingProducts(publicCatalog)
+    if (!isCollectionPublished(rings.length, true)) return { missing: true as const }
+    return { missing: false as const, view: { h1: ALL_RINGS_COLLECTION.h1, intro: ALL_RINGS_COLLECTION.intro, products: rings } }
+  }, [publicCatalog, route])
 
   useEffect(() => {
-    if (route.kind !== 'home' && route.kind !== 'product') return
+    previousRouteKind.current = route.kind
+  }, [route.kind])
+
+  useEffect(() => {
+    if (route.kind === 'admin') return
+    const path = window.location.pathname
+    const others = publishedCollections(publicCatalog).map(({ slug, h1 }) => ({ slug, h1 }))
+    if (route.kind === 'home') {
+      applyDocumentSeo(buildSeoMeta({ kind: 'home', path: '/', promotion: publicPromotion ?? null, products: publicCatalog, otherCollections: others }))
+      return
+    }
+    if (route.kind === 'product') {
+      if (catalogLoading) return
+      applyDocumentSeo(buildSeoMeta({ kind: 'product', path, product: product ?? null }))
+      return
+    }
+    if (route.kind === 'collection') {
+      if (catalogLoading) return
+      if (!collectionView || collectionView.missing) {
+        applyDocumentSeo(buildSeoMeta({ kind: 'not-found', path }))
+        return
+      }
+      applyDocumentSeo(buildSeoMeta({
+        kind: 'collection',
+        path,
+        collectionSlug: collectionView.view.slug,
+        collectionPublished: true,
+        collectionProducts: collectionView.view.products,
+        otherCollections: others,
+      }))
+      return
+    }
+    if (route.kind === 'delivery') {
+      applyDocumentSeo(buildSeoMeta({ kind: 'delivery', path: '/entregas-maracaibo' }))
+      return
+    }
+    if (route.kind === 'size-guide') {
+      applyDocumentSeo(buildSeoMeta({ kind: 'size-guide', path: '/guia-de-tallas' }))
+      return
+    }
+    if (route.kind === 'privacy') {
+      applyDocumentSeo(buildSeoMeta({ kind: 'privacy', path: '/privacidad' }))
+      return
+    }
+    applyDocumentSeo(buildSeoMeta({ kind: 'not-found', path }))
+  }, [catalogLoading, collectionView, product, publicCatalog, publicPromotion, route])
+
+  useEffect(() => {
+    if ((route.kind === 'product' || route.kind === 'collection') && catalogLoading) return
+    pageViewTracker.current?.(window.location.pathname, route, route.kind === 'product' ? product : undefined, Boolean(catalogError))
+  }, [catalogError, catalogLoading, product, route])
+
+  useEffect(() => {
+    if (!isPublicCatalogRoute(route)) return
     if (localPreview) {
       // Keep products created through the local Admin fallback while the SPA
       // navigates between sections. A full reload still starts from the demo
@@ -80,12 +158,13 @@ export function App() {
       return
     }
     const controller = new AbortController()
+    const freshKey = enteredPublicFromAdmin ? String(Date.now()) : undefined
     setCatalogLoading(true)
     setCatalogError(null)
     Promise.all([
-      fetchCatalog(controller.signal),
-      fetchActivePromotion(controller.signal).catch(() => null),
-      fetchPublicCategories(controller.signal).catch(() => defaultPublicCategories),
+      fetchCatalog(controller.signal, freshKey),
+      fetchActivePromotion(controller.signal, freshKey).catch(() => null),
+      fetchPublicCategories(controller.signal, freshKey).catch(() => defaultPublicCategories),
     ]).then(([remoteProducts, promotion, categories]) => {
       if (controller.signal.aborted) return
       setProducts(remoteProducts.map((product) => toClientProduct(product, promotion)))
@@ -100,7 +179,7 @@ export function App() {
       if (!controller.signal.aborted) setCatalogLoading(false)
     })
     return () => controller.abort()
-  }, [catalogAttempt, localPreview, route.kind])
+  }, [catalogAttempt, localPreview, route.kind === 'admin' || !isPublicCatalogRoute(route)])
 
   useEffect(() => {
     if (route.kind !== 'admin') return
@@ -114,37 +193,36 @@ export function App() {
         const details = await Promise.all(summaries.map((summary) => fetchAdminOrder(summary.id, controller.signal)))
         if (!controller.signal.aborted) {
           setOrders(details)
-          saveOrders(details)
+          if (localPreview) saveOrders(details)
         }
       }).catch(() => undefined)
     }).catch(() => undefined)
     return () => controller.abort()
   }, [route.kind])
-  const product = route.kind === 'product' ? getProductBySlug(products, route.slug) : undefined
-  const adminSection = route.kind === 'admin' ? route.section as AdminSection : 'dashboard'
 
   function handleOrderCreated(order: Order) {
     setOrders((current) => {
       const next = current.some((item) => item.id === order.id) ? current : [...current, order]
-      saveOrders(next)
+      if (localPreview) saveOrders(next)
       return next
     })
   }
 
   const content = useMemo(() => {
-    if (route.kind === 'home') return <StorePage products={products} categories={publicCategories} promotion={publicPromotion} catalogLoading={catalogLoading} catalogError={catalogError} onRetry={() => setCatalogAttempt((attempt) => attempt + 1)} onOrderCreated={handleOrderCreated} />
+    if (route.kind === 'home' || route.kind === 'collection') return <StorePage products={products} categories={publicCategories} promotion={publicPromotion} catalogLoading={catalogLoading} catalogError={catalogError} onRetry={() => setCatalogAttempt((attempt) => attempt + 1)} onOrderCreated={handleOrderCreated} />
     if (route.kind === 'product') {
       if (catalogLoading) return <CatalogLoading />
       if (catalogError) return <CatalogError message={catalogError} onRetry={() => setCatalogAttempt((attempt) => attempt + 1)} />
       return product ? <ProductPage product={product} products={products} promotion={publicPromotion} onOrderCreated={handleOrderCreated} /> : <NotFound />
     }
+    if (route.kind === 'delivery') return <DeliveryPage />
     if (route.kind === 'privacy') return <PrivacyPage />
     if (route.kind === 'size-guide') return <SizeGuidePage />
     if (route.kind === 'admin') return <Suspense fallback={<AdminLoading />}><AdminShell section={adminSection} pendingOrders={orders.filter((order) => order.status === 'PENDING').length}><AdminPages section={adminSection} orderId={route.orderId} products={products} setProducts={setProducts} orders={orders} setOrders={setOrders} /></AdminShell></Suspense>
     return <NotFound />
-  }, [adminSection, catalogError, catalogLoading, orders, product, products, publicPromotion, route])
+  }, [adminSection, catalogError, catalogLoading, collectionView, orders, product, products, publicCategories, publicPromotion, route])
 
-  return <CartProvider products={products} promotion={publicPromotion} catalogReady={route.kind !== 'home' && route.kind !== 'product' || (!catalogLoading && !catalogError)}>{content}</CartProvider>
+  return <CartProvider products={products} promotion={publicPromotion} catalogReady={isPublicCatalogRoute(route) && !catalogLoading && !catalogError}>{content}</CartProvider>
 }
 
 function CatalogLoading() {

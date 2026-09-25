@@ -98,3 +98,17 @@ export function updatePromotion(state: CoruState, promotionId: string, input: Pa
 export function deactivatePromotion(state: CoruState, promotionId: string): Promotion {
   return updatePromotion(state, promotionId, { active: false })
 }
+
+/**
+ * Permanently removes an inactive promotion from the in-memory catalog.
+ * Active promotions must first be deactivated so a live rule cannot be
+ * removed accidentally from the admin panel.
+ */
+export function deletePromotion(state: CoruState, promotionId: string): Promotion {
+  const index = state.promotions.findIndex((promotion) => promotion.id === promotionId)
+  if (index < 0) throw new PromotionServiceError('NOT_FOUND', 'Promoción no encontrada.')
+  const promotion = state.promotions[index]
+  if (promotion.active) throw new PromotionServiceError('CONFLICT', 'Desactiva la promoción antes de eliminarla.')
+  state.promotions.splice(index, 1)
+  return { ...promotion }
+}

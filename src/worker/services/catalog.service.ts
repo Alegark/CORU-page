@@ -1,5 +1,7 @@
 import type { Product, ProductArtwork, ProductCategory, Category, FulfillmentType } from '../../shared/types'
+import { deriveRingMeasurements } from '../../shared/ring-size'
 import type { CoruState } from '../state'
+import { orderProductImages } from './image.service'
 
 export type CatalogErrorCode = 'VALIDATION_ERROR' | 'NOT_FOUND' | 'CONFLICT'
 
@@ -56,10 +58,42 @@ export type ProductInput = {
   description?: string
   material?: string
   fulfillmentType?: FulfillmentType
-  measurementsText?: string
-  innerDiameterMm?: number
-  circumferenceMm?: number
-  leadTime?: string
+  measurementsText?: string | null
+  innerDiameterMm?: number | null
+  circumferenceMm?: number | null
+  usSize?: string | null
+  leadTime?: string | null
+}
+
+function normalizedMeasurement(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.round((value + Number.EPSILON) * 10) / 10
+    : undefined
+}
+
+function normalizedUsSize(value: unknown): string | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  if (typeof value !== 'string') return undefined
+  const result = value.trim().slice(0, 20)
+  return result || undefined
+}
+
+function ringMeasurementFields(input: { innerDiameterMm?: number | null; circumferenceMm?: number | null; usSize?: string | null }): Pick<Product, 'innerDiameterMm' | 'circumferenceMm' | 'usSize'> {
+  const innerDiameterMm = normalizedMeasurement(input.innerDiameterMm)
+  const explicitCircumference = normalizedMeasurement(input.circumferenceMm)
+  const explicitUsSize = normalizedUsSize(input.usSize)
+  if (innerDiameterMm === undefined) {
+    return {
+      ...(explicitCircumference === undefined ? {} : { circumferenceMm: explicitCircumference }),
+      ...(explicitUsSize === undefined ? {} : { usSize: explicitUsSize }),
+    }
+  }
+  const derived = deriveRingMeasurements(innerDiameterMm)
+  return {
+    innerDiameterMm,
+    circumferenceMm: explicitCircumference ?? derived.circumferenceMm,
+    usSize: explicitUsSize ?? derived.usSize,
+  }
 }
 
 function assertUnique(state: CoruState, slug: string, idToIgnore?: string): void {
@@ -67,7 +101,16 @@ function assertUnique(state: CoruState, slug: string, idToIgnore?: string): void
 }
 
 export function listAdminProducts(state: CoruState): Product[] {
-  return state.products.map((product) => ({ ...product }))
+  return state.products.map((product) => {
+    const primaryImage = orderProductImages([...state.images.values()].filter((image) => image.productId === product.id))[0]
+    if (!primaryImage) return { ...product }
+
+    // The admin list is behind the access boundary, so it can use the private
+    // preview route. This also keeps photos visible for hidden or sold-out
+    // products, where the public media route intentionally returns 404.
+    const imageUrl = `/api/admin/products/${encodeURIComponent(product.id)}/images/${encodeURIComponent(primaryImage.id)}/preview`
+    return { ...product, imageUrl, imageUrls: [imageUrl], imageSources: [{ id: primaryImage.id, src: imageUrl }] }
+  })
 }
 
 export function createProduct(state: CoruState, input: ProductInput): Product {
@@ -89,8 +132,7 @@ export function createProduct(state: CoruState, input: ProductInput): Product {
     material: typeof input.material === 'string' ? input.material.trim().slice(0, 120) : '',
     fulfillmentType: input.fulfillmentType ?? 'STOCK',
     ...(typeof input.measurementsText === 'string' && input.measurementsText.trim() ? { measurementsText: input.measurementsText.trim().slice(0, 240) } : {}),
-    ...(typeof input.innerDiameterMm === 'number' && Number.isFinite(input.innerDiameterMm) && input.innerDiameterMm > 0 ? { innerDiameterMm: input.innerDiameterMm } : {}),
-    ...(typeof input.circumferenceMm === 'number' && Number.isFinite(input.circumferenceMm) && input.circumferenceMm > 0 ? { circumferenceMm: input.circumferenceMm } : {}),
+    ...ringMeasurementFields(input),
     ...(typeof input.leadTime === 'string' && input.leadTime.trim() ? { leadTime: input.leadTime.trim().slice(0, 80) } : {}),
   }
   state.products.push(product)
@@ -122,11 +164,51 @@ export function updateProduct(state: CoruState, productId: string, input: Partia
     product.fulfillmentType = input.fulfillmentType
     if (input.fulfillmentType === 'PREORDER' && !product.leadTime) product.leadTime = '3–4 semanas'
   }
-  if (input.measurementsText !== undefined) product.measurementsText = typeof input.measurementsText === 'string' ? input.measurementsText.trim().slice(0, 240) : undefined
-  if (input.innerDiameterMm !== undefined) product.innerDiameterMm = typeof input.innerDiameterMm === 'number' && Number.isFinite(input.innerDiameterMm) && input.innerDiameterMm > 0 ? input.innerDiameterMm : undefined
-  if (input.circumferenceMm !== undefined) product.circumferenceMm = typeof input.circumferenceMm === 'number' && Number.isFinite(input.circumferenceMm) && input.circumferenceMm > 0 ? input.circumferenceMm : undefined
+  if (input.measurementsText !== undefined) {
+    const measurementsText = typeof input.measurementsText === 'string' ? input.measurementsText.trim().slice(0, 240) : ''
+    if (measurementsText) product.measurementsText = measurementsText
+    else delete product.measurementsText
+  }
+  if (input.innerDiameterMm !== undefined) {
+    // A new diameter is the base measurement. Omitted companions are
+    // recalculated; the UI sends them explicitly when the operator wants to
+    // keep a manual override.
+    const measurements = ringMeasurementFields({
+      innerDiameterMm: input.innerDiameterMm,
+      circumferenceMm: input.circumferenceMm,
+      usSize: input.usSize,
+    })
+    if (measurements.innerDiameterMm === undefined) delete product.innerDiameterMm
+    else product.innerDiameterMm = measurements.innerDiameterMm
+    if (measurements.circumferenceMm === undefined) delete product.circumferenceMm
+    else product.circumferenceMm = measurements.circumferenceMm
+    if (measurements.usSize === undefined) delete product.usSize
+    else product.usSize = measurements.usSize
+  } else if (input.circumferenceMm !== undefined || input.usSize !== undefined) {
+    if (input.circumferenceMm !== undefined) {
+      const circumferenceMm = normalizedMeasurement(input.circumferenceMm)
+      if (circumferenceMm === undefined) delete product.circumferenceMm
+      else product.circumferenceMm = circumferenceMm
+    }
+    if (input.usSize !== undefined) {
+      const usSize = normalizedUsSize(input.usSize)
+      if (usSize === undefined) delete product.usSize
+      else product.usSize = usSize
+    }
+  }
   if (input.leadTime !== undefined) product.leadTime = typeof input.leadTime === 'string' && input.leadTime.trim() ? input.leadTime.trim().slice(0, 80) : undefined
   return product
+}
+
+/** Permanently removes an inactive product and keeps inventory history intact. */
+export function deleteProduct(state: CoruState, productId: string): Product {
+  const index = state.products.findIndex((product) => product.id === productId)
+  if (index < 0) throw new CatalogServiceError('NOT_FOUND', 'Producto no encontrado.')
+  const product = state.products[index]
+  if (product.active) throw new CatalogServiceError('CONFLICT', 'Oculta el producto antes de eliminarlo.')
+  if (state.movements.some((movement) => movement.productId === productId)) throw new CatalogServiceError('CONFLICT', 'No se puede eliminar un producto con movimientos de inventario.')
+  state.products.splice(index, 1)
+  return { ...product }
 }
 
 export function listCategories(state: CoruState): Category[] {
