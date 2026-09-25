@@ -5,7 +5,7 @@ Historial corto de lo que entra a git o a producción. La entrada nueva va arrib
 ## 2026-09-24 — el trabajo de la tienda y el SEO queda en git
 
 - La tienda pública, el HTML para Google y los filtros de estilo en la misma página pasan de la carpeta local al repositorio.
-- Commit: `pendiente`
+- Commit: `a0a4ac9`
 - Producción: lo ya publicado sigue en `https://coru.systems/`. El filtro independiente de categoría y estilo todavía no está desplegado.
 
 ## 2026-09-24 — los estilos filtran la tienda en la misma página
